@@ -7,4 +7,9 @@ base-image: ghcr.io/ublue-os/bazzite
 image-version: stable
 
 modules:
+  - type: script
+    snippets:
+      - sed -i 's/^NAME=.*/NAME="Tokoro OS"/' /usr/lib/os-release
+      - sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="Tokoro OS"/' /usr/lib/os-release
+
   - type: signing
