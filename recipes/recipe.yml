@@ -11,5 +11,7 @@ modules:
     snippets:
       - sed -i 's/^NAME=.*/NAME="Tokoro OS"/' /usr/lib/os-release
       - sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="Tokoro OS"/' /usr/lib/os-release
+      - sed -i 's/^# Welcome to Bazzite.*/# Welcome to Tokoro OS/' /usr/share/ublue-os/motd/template.md
+      - sed -i '/bazzite\.gg/d' /usr/share/ublue-os/motd/template.md
 
   - type: signing
