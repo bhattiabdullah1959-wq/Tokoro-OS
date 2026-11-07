@@ -16,12 +16,18 @@ assets_page="https://github.com/ollama/ollama/releases/expanded_assets/v${OLLAMA
 
 # Asset names have changed between releases, so discover the right one from the
 # release page instead of hard-coding it. Fall back to the historical name.
+#
+# Discovery is best-effort and this whole script is optional, so no step in it
+# may fail the build: grep exits 1 when nothing matches, and `head -n1` closing
+# the pipe early makes the pipeline die of SIGPIPE under `pipefail`.
 asset=""
-if page=$(curl -fsSL --max-time 30 "$assets_page" 2>/dev/null); then
-  asset=$(printf '%s' "$page" |
-    grep -oE "ollama-linux-${OLLAMA_ARCH}[A-Za-z0-9_.-]*\.(tgz|tar\.gz)" |
-    sort -u | head -n1)
+assets_file=/tmp/ollama-assets.html
+curl -fsSL --max-time 30 "$assets_page" --output "$assets_file" 2>/dev/null || true
+if [[ -s "$assets_file" ]]; then
+  asset=$(grep -oE "ollama-linux-${OLLAMA_ARCH}[A-Za-z0-9_.-]*\.(tgz|tar\.gz)" "$assets_file" |
+    sort -u | head -n1 || true)
 fi
+rm -f "$assets_file"
 if [[ -z "$asset" ]]; then
   echo "WARN: could not discover a Linux asset for Ollama v${OLLAMA_VERSION}" >&2
   asset="ollama-linux-${OLLAMA_ARCH}.tgz"
@@ -41,7 +47,13 @@ if ! curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 \
   exit 0
 fi
 
-tar -xzf /tmp/ollama.tgz -C "$dest"
+if ! tar -xzf /tmp/ollama.tgz -C "$dest"; then
+  echo "WARN: ${asset} could not be extracted" >&2
+  printf 'image built with an unusable Tokoro AI runtime archive (%s)\n' "$asset" >"$marker"
+  echo "::endgroup::"
+  rm -f /tmp/ollama.tgz
+  exit 0
+fi
 rm -f /tmp/ollama.tgz
 
 if [[ ! -x "$dest/bin/ollama" ]]; then

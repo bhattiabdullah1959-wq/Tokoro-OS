@@ -27,7 +27,9 @@ check /etc/udev/rules.d/90-tokoro-acer-key.rules
 for exe in /usr/libexec/tokoro/tokoro-acer \
   /usr/libexec/tokoro/tokoro-acer-learn \
   /usr/libexec/tokoro/tokoro-acer-cycle; do
-  [[ -e "$exe" ]] && chmod 0755 "$exe"
+  if [[ -e "$exe" ]]; then
+    chmod 0755 "$exe"
+  fi
 done
 
 # The service is enabled image-wide but gated by ExecCondition=tokoro-acer detect,
