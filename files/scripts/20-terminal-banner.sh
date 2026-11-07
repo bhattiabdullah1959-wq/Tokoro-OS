@@ -9,6 +9,9 @@
 # TOKORO_ROOT lets the test suite run this against a fixture tree.
 set -euo pipefail
 
+printf '::notice::tokoro-build: %s starting\n' "${0##*/}" >&2
+trap 'printf "::error::tokoro-build: %s failed at line %s (rc=%s)\n" "${0##*/}" "${LINENO}" "$?" >&2' ERR
+
 root="${TOKORO_ROOT:-}"
 p() { printf '%s%s' "$root" "$1"; }
 

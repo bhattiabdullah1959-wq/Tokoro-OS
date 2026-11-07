@@ -6,6 +6,9 @@
 # instead of shipping a silently broken feature.
 set -euo pipefail
 
+printf '::notice::tokoro-build: %s starting\n' "${0##*/}" >&2
+trap 'printf "::error::tokoro-build: %s failed at line %s (rc=%s)\n" "${0##*/}" "${LINENO}" "$?" >&2' ERR
+
 OLLAMA_VERSION="${OLLAMA_VERSION:-0.40.15}"
 OLLAMA_ARCH="${OLLAMA_ARCH:-amd64}"
 base="https://github.com/ollama/ollama/releases/download/v${OLLAMA_VERSION}"

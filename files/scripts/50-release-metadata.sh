@@ -2,6 +2,9 @@
 # Writes the release metadata that runtime tools and `tokoro version` read.
 set -euo pipefail
 
+printf '::notice::tokoro-build: %s starting\n' "${0##*/}" >&2
+trap 'printf "::error::tokoro-build: %s failed at line %s (rc=%s)\n" "${0##*/}" "${LINENO}" "$?" >&2' ERR
+
 echo "::group::Release metadata"
 
 release=/usr/share/tokoro/release.json

@@ -4,6 +4,9 @@
 # is safe on every image variant and every desktop.
 set -euo pipefail
 
+printf '::notice::tokoro-build: %s starting\n' "${0##*/}" >&2
+trap 'printf "::error::tokoro-build: %s failed at line %s (rc=%s)\n" "${0##*/}" "${LINENO}" "$?" >&2' ERR
+
 echo "::group::Acer Nitro support"
 
 fail=0

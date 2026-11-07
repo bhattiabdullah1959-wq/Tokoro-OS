@@ -3,6 +3,9 @@
 # broken base image fails loudly instead of producing a half-branded system.
 set -euo pipefail
 
+printf '::notice::tokoro-build: %s starting\n' "${0##*/}" >&2
+trap 'printf "::error::tokoro-build: %s failed at line %s (rc=%s)\n" "${0##*/}" "${LINENO}" "$?" >&2' ERR
+
 echo "::group::Tokoro OS preflight"
 
 fail=0

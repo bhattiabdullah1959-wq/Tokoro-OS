@@ -3,6 +3,9 @@
 # must never fail the build, because branding paths move between Bazzite releases.
 set -euo pipefail
 
+printf '::notice::tokoro-build: %s starting\n' "${0##*/}" >&2
+trap 'printf "::error::tokoro-build: %s failed at line %s (rc=%s)\n" "${0##*/}" "${LINENO}" "$?" >&2' ERR
+
 echo "::group::Tokoro OS branding"
 
 # --- Ensure runtime directories exist -----------------------------------------
