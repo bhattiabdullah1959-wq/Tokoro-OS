@@ -3,3 +3,6 @@ cosign.private
 /Containerfile
 *.iso
 *.iso-CHECKSUM
+
+# python bytecode from local test runs
+__pycache__/
