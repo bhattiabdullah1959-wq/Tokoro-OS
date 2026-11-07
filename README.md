@@ -135,7 +135,7 @@ fixtures. See [docs/testing.md](docs/testing.md).
 | Acer battery limiter, modes, Nitro key | Wired and gated; **not tested on real hardware** |
 | Sound themes | Theme skeletons inherit `freedesktop`; no custom audio assets yet |
 | Game dataset | Curated seed (100+ titles), not the full top 1000; `tokoro games import` extends it |
-| Local AI | Runtime installs at build; model downloads happen on `tokoro ai enable` |
+| Local AI | Off by default, so setup downloads nothing. The runtime downloads on first opt-in and abilities shrink with the tier |
 
 ## License
 

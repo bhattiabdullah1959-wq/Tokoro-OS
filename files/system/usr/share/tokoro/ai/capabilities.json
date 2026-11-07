@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "capabilities": {
+    "files": "read files and folders the user names",
+    "updates": "download system updates",
+    "apps": "open installed applications",
+    "screen": "capture the screen to answer questions about it"
+  },
+  "tiers": {
+    "ultra-performance": [],
+    "performance": ["apps"],
+    "balanced": ["files", "apps"],
+    "quality": ["files", "apps", "screen"],
+    "ultra-quality": ["files", "updates", "apps", "screen"]
+  }
+}

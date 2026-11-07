@@ -12,7 +12,9 @@ Usage: tokoro tier [command]
   show                     current tier, recommendation and warning state
   list                     all tiers with their cars
   detect [--save]          re-run hardware detection (optionally store result)
-  set <tier> [--no-apply]  switch tier (system + desktop settings)
+  set <tier> [--yes]       switch tier (system + desktop settings); --yes skips
+                           the above-recommendation confirmation
+  check <tier>             exit 3 when the tier is above the recommendation
   apply                    re-apply the current tier's settings
   status --json            machine readable state for scripts/applets
   reset                    go back to the hardware recommendation
@@ -158,12 +160,51 @@ JS
   rm -f "$script"
 }
 
-cmd_set() {
-  local tier=${1:-}
-  local no_apply=0
-  [[ "${2:-}" == "--no-apply" ]] && no_apply=1
-  [[ -n "$tier" ]] || tokoro_die "usage: tokoro tier set <tier>"
+cmd_check() {
+  local tier=${1:-} rec
+  tier=${tier:-$(tokoro_current_tier)}
   tokoro_tier_valid "$tier" || tokoro_die "unknown tier: $tier"
+  rec=$(tokoro_recommended_tier)
+  if [[ -z "$rec" ]]; then
+    printf '%s is fine (hardware not detected yet)\n' "$tier"
+    return 0
+  fi
+  if [[ "$(tokoro_tier_index "$tier")" -gt "$(tokoro_tier_index "$rec")" ]]; then
+    printf 'warning: %s is above this machine'"'"'s recommendation (%s).\n' "$tier" "$rec"
+    printf 'Your PC may slow down or run hotter. Nothing is blocked.\n'
+    return 3
+  fi
+  printf '%s is within the recommendation (%s)\n' "$tier" "$rec"
+}
+
+cmd_set() {
+  local tier="" no_apply=0 assume_yes=0 rec answer
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --no-apply) no_apply=1; shift ;;
+      --yes | -y) assume_yes=1; shift ;;
+      *) tier=$1; shift ;;
+    esac
+  done
+  [[ -n "$tier" ]] || tokoro_die "usage: tokoro tier set <tier> [--yes]"
+  tokoro_tier_valid "$tier" || tokoro_die "unknown tier: $tier"
+
+  # Above the recommendation is allowed, never refused: warn, then continue
+  # unless the user backs out at the prompt.
+  rec=$(tokoro_recommended_tier)
+  if [[ -n "$rec" && "$(tokoro_tier_index "$tier")" -gt "$(tokoro_tier_index "$rec")" ]]; then
+    printf 'warning: %s is above this machine'"'"'s recommendation (%s).\n' "$tier" "$rec" >&2
+    printf 'Your PC may slow down or run hotter. This is only a warning.\n' >&2
+    if [[ "$assume_yes" -eq 0 && -t 0 && -t 1 ]]; then
+      read -r -p "Change the tier anyway? [Y/n]: " answer || answer=""
+      case "${answer:-y}" in
+        n | N | no | NO)
+          tokoro_info "tier unchanged"
+          return 0
+          ;;
+      esac
+    fi
+  fi
 
   if ! tokoro_is_root; then
     # System state is root owned; re-exec through pkexec with an explicit marker.
@@ -237,7 +278,8 @@ main() {
     show) cmd_show ;;
     list) cmd_list ;;
     detect) cmd_detect "${1:-}" ;;
-    set) cmd_set "${1:-}" "${2:-}" ;;
+    set) cmd_set "$@" ;;
+    check) cmd_check "${1:-}" ;;
     apply)
       if tokoro_is_root; then
         apply_system "$(tokoro_current_tier)"

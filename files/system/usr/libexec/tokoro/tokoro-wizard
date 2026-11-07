@@ -53,6 +53,15 @@ def tier_index(tier: str) -> int:
     return TIERS.index(tier) if tier in TIERS else -1
 
 
+def ai_capabilities(tier: str) -> list[str]:
+    """Abilities the assistant keeps at this tier (fewer on slower machines)."""
+    try:
+        with open(os.path.join(SHARE, "ai", "capabilities.json"), encoding="utf-8") as fh:
+            return json.load(fh).get("tiers", {}).get(tier, [])
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
 # --- front ends ---------------------------------------------------------------
 class Gui:
     """kdialog front end. Falls back to asking nothing: returns None on cancel."""
@@ -165,7 +174,8 @@ def collect(args: argparse.Namespace, ui, hw: dict, apps: dict) -> dict:
     smart_home_available = tier_pos >= tier_index("quality")
 
     features = {
-        "ai": answers.get("ai", True),
+        # Opt-in: declining AI must not download the ~1 GB runtime.
+        "ai": answers.get("ai", False),
         "smart_home": answers.get("smart_home", False) and smart_home_available,
         "acer_battery_limit": answers.get("acer_battery_limit", False),
         "gaming_mode": answers.get("gaming_mode", True),
@@ -173,7 +183,8 @@ def collect(args: argparse.Namespace, ui, hw: dict, apps: dict) -> dict:
     }
     if not args.answers:
         checkboxes = [
-            ("ai", "Local AI (on-device, model follows your tier)", features["ai"]),
+            ("ai", "Local AI — downloads its runtime once (~1 GB); can be turned on later in settings",
+             features["ai"]),
             ("gaming_mode", "Gaming mode + benchmark", features["gaming_mode"]),
             ("work_gaming_keybind", "Work/Gaming toggle keybind", features["work_gaming_keybind"]),
         ]
@@ -235,7 +246,12 @@ def print_summary(plan: dict) -> None:
     log("Ready to apply")
     log(f"  tier          : {plan['tier']} (recommended {plan['recommended_tier']})")
     log(f"  features      : {', '.join(on) if on else 'none'}")
-    log(f"  AI model      : Tokoro {plan['ai_model']}" if feat["ai"] else "  AI            : off")
+    if feat["ai"]:
+        caps = ", ".join(ai_capabilities(plan["tier"])) or "chat only"
+        log(f"  AI model      : Tokoro {plan['ai_model']} (abilities: {caps})")
+        log("  AI runtime    : downloads on first use; follow it with: tokoro ai status")
+    else:
+        log("  AI            : off (nothing downloaded; turn it on later in settings)")
     log(f"  apps          : {json.dumps(plan['apps'])}")
     if plan["hardware"].get("acer", {}).get("is_nitro"):
         log("  Acer          : Nitro V detected, battery limiter "

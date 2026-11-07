@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# tokoro-ai-serve — start the downloaded Ollama runtime for tokoro-ai.service.
+#
+# The runtime lives in /var/lib/tokoro (writable, survives image updates) because
+# the image itself ships no AI runtime. Images built before 1.2.08 that still
+# carry /usr/bin/tokoro-ollama keep working through the fallback below.
+set -euo pipefail
+
+# shellcheck source=tokoro-lib.sh
+. "${TOKORO_EXEC:-/usr/libexec/tokoro}/tokoro-lib.sh"
+
+runtime=$TOKORO_STATE/ai/runtime/bin/ollama
+[[ -x "$runtime" ]] || runtime=/usr/bin/tokoro-ollama
+
+if [[ ! -x "$runtime" ]]; then
+  printf 'tokoro-ai-serve: the AI runtime is not installed.\n' >&2
+  printf 'Turn the assistant on to download it: tokoro ai enable\n' >&2
+  exit 1
+fi
+
+exec "$runtime" serve

@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# tokoro-ai-runtime — fetch or remove the on-device Ollama runtime.
+#
+# The image never ships the runtime. It is downloaded the first time the user
+# turns AI on, so declining AI during setup downloads nothing at all.
+set -euo pipefail
+
+# shellcheck source=tokoro-lib.sh
+. "${TOKORO_EXEC:-/usr/libexec/tokoro}/tokoro-lib.sh"
+
+version="${TOKORO_OLLAMA_VERSION:-0.40.15}"
+arch="${TOKORO_OLLAMA_ARCH:-amd64}"
+base="https://github.com/ollama/ollama/releases/download/v${version}"
+
+runtime_dir() { printf '%s/ai/runtime' "$TOKORO_STATE"; }
+
+usage() {
+  cat <<'EOF'
+Usage: tokoro-ai-runtime <status|install|remove>
+
+  status   installed or missing, with the path and version
+  install  download the pinned release into /var/lib/tokoro/ai/runtime
+  remove   delete the downloaded runtime (models are kept)
+
+Upstream renames its assets between releases, so the installer probes the
+plain .tgz, .tar.gz and .tar.zst names and never the -rocm/-mlx variants.
+EOF
+}
+
+cmd_status() {
+  local dir bin ver
+  dir=$(runtime_dir)
+  bin=$dir/bin/ollama
+  if [[ -x "$bin" ]]; then
+    printf 'installed\n'
+    printf 'path    : %s\n' "$bin"
+    ver=$("$bin" --version 2>/dev/null | head -n1 || true)
+    [[ -n "$ver" ]] && printf 'version : %s\n' "$ver"
+    return 0
+  fi
+  printf 'missing\n'
+  printf 'note    : the runtime is downloaded when AI is turned on (tokoro ai enable)\n'
+  return 1
+}
+
+cmd_install() {
+  tokoro_require_root
+  local dir archive asset candidate
+  dir=$(runtime_dir)
+  if [[ -x "$dir/bin/ollama" ]]; then
+    tokoro_info "AI runtime already installed at $dir"
+    return 0
+  fi
+  install -d -m 0755 "$TOKORO_STATE/ai" "$dir"
+
+  asset=""
+  for candidate in "ollama-linux-${arch}.tgz" \
+    "ollama-linux-${arch}.tar.gz" \
+    "ollama-linux-${arch}.tar.zst"; do
+    if curl --fail --location --silent --head --max-time 20 \
+      --output /dev/null "${base}/${candidate}"; then
+      asset="$candidate"
+      break
+    fi
+  done
+  [[ -n "$asset" ]] || tokoro_die "no Linux asset published for Ollama v${version}"
+
+  archive=$(mktemp --suffix=.ollama)
+  tokoro_info "downloading ${asset} (about 1 GB, once)..."
+  if ! curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 \
+    --progress-bar --output "$archive" "${base}/${asset}"; then
+    rm -f "$archive"
+    tokoro_die "download failed: ${base}/${asset}"
+  fi
+
+  case "$asset" in
+    *.zst)
+      if tokoro_have unzstd; then
+        if ! unzstd -c "$archive" | tar -xf - -C "$dir"; then
+          rm -f "$archive"
+          tokoro_die "could not extract ${asset}"
+        fi
+      elif ! tar --zstd -xf "$archive" -C "$dir" 2>/dev/null; then
+        rm -f "$archive"
+        tokoro_die "could not extract ${asset}: no zstd support in this image"
+      fi
+      ;;
+    *)
+      if ! tar -xzf "$archive" -C "$dir"; then
+        rm -f "$archive"
+        tokoro_die "could not extract ${asset}"
+      fi
+      ;;
+  esac
+  rm -f "$archive"
+
+  [[ -x "$dir/bin/ollama" ]] || tokoro_die "archive ${asset} did not contain bin/ollama"
+  tokoro_info "AI runtime installed at $dir"
+}
+
+cmd_remove() {
+  tokoro_require_root
+  local dir
+  dir=$(runtime_dir)
+  if [[ ! -d "$dir" ]]; then
+    tokoro_info "AI runtime is not installed"
+    return 0
+  fi
+  rm -rf "$dir"
+  tokoro_info "AI runtime removed (downloaded models are kept in $TOKORO_STATE/ai/models)"
+}
+
+main() {
+  local cmd=${1:-status}
+  case "$cmd" in
+    status) cmd_status ;;
+    install) cmd_install ;;
+    remove) cmd_remove ;;
+    -h | --help | help) usage ;;
+    *) usage; exit 2 ;;
+  esac
+}
+
+main "$@"

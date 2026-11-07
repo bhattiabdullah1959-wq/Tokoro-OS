@@ -11,6 +11,12 @@
 Each tier owns a wallpaper (`/usr/share/tokoro/wallpapers/tokoro-<tier>.svg`) and
 a sound theme (`/usr/share/sounds/tokoro-<tier>/`).
 
+A slower tier also means a smaller local model, so the assistant keeps fewer
+abilities: `ultra-performance` can only chat, `performance` may open apps,
+`balanced` may read files, `quality` may look at the screen, and only
+`ultra-quality` may stage system updates. `tokoro ai capabilities` prints the
+current list; see [ai.md](ai.md).
+
 ## Detection
 
 `tokoro-detect-hardware` reads sysfs and DMI and scores the machine 0-100:
@@ -35,16 +41,24 @@ Sampling of the mapping:
 
 ## Overriding
 
-You can pick any tier. When the chosen tier is above the hardware
-recommendation:
+You can pick any tier, including one above the hardware recommendation. That is
+a warning, never a block:
 
-- `/etc/tokoro/tier.conf` records `TOKORO_OVERRIDE=1`
-- `~/.config/tokoro/tier.json` records `above_recommendation: true`
-- the Plasma applet shows a warning icon
+- the applet asks *"Change anyway / Keep current"*; nothing changes unless you
+  choose to continue
+- `tokoro tier set quality` prints the warning and asks `[Y/n]` on a terminal
+- `tokoro tier set --yes ultra-quality` skips the prompt for scripts
+- `tokoro tier check <tier>` exits `3` when a tier is above the recommendation
+  and `0` when it is within it
 
-There is deliberately **no popup**. `tokoro tier show` prints the same warning in
-text. `tokoro tier reset` returns to the recommendation, and
-`tokoro tier detect --save` refreshes it after a hardware change.
+After a confirmed change, `/etc/tokoro/tier.conf` records `TOKORO_OVERRIDE=1`,
+`~/.config/tokoro/tier.json` records `above_recommendation: true`, and the applet
+shows a warning icon. The machine may be slower or run hotter; Tokoro keeps the
+choice exactly as made.
+
+`tokoro tier reset` returns to the recommendation, and `tokoro tier detect
+--save` refreshes it after a hardware change. `tokoro drivers scan` reports
+hardware that has no driver or firmware that needs updating.
 
 ## Commands
 

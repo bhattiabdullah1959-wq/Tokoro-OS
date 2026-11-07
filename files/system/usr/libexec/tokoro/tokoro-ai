@@ -1,29 +1,39 @@
 #!/usr/bin/env bash
 # tokoro-ai — local, on-device AI that follows the performance tier.
+#
+# The runtime is never baked into the image: it is downloaded the first time the
+# assistant is turned on, so declining AI during setup downloads nothing.
 set -euo pipefail
 
 # shellcheck source=tokoro-lib.sh
 . "${TOKORO_EXEC:-/usr/libexec/tokoro}/tokoro-lib.sh"
 
 models_json=$TOKORO_SHARE/ai/models.json
+caps_json=$TOKORO_SHARE/ai/capabilities.json
 ai_state=$TOKORO_ETC/ai.json
 endpoint=${TOKORO_AI_ENDPOINT:-http://127.0.0.1:11435}
-runtime_wrapper=/usr/bin/tokoro-ollama
+runtime_dir=$TOKORO_STATE/ai/runtime
 
 usage() {
   cat <<'EOF'
 Usage: tokoro ai [command]
 
-  status                 is the AI enabled, which model, is the runtime running
+  status [--json]        enabled, model, runtime, tier and allowed abilities
   models                 list the five Tokoro models and their tier mapping
-  enable [model]         start the runtime and fetch the model (opt-in)
+  capabilities [--json]  what the assistant may touch at the current tier
+  enable [--reboot]      download the runtime if needed, start it, fetch the model
   disable                stop the runtime and remember the choice
   model [id]             show or switch the active model
   ask "question"         one-shot answer from the local model
+  read <file>            summarise a file (needs the files ability)
+  see ["question"]       answer a question about what is on the screen
+                         (ultra-quality tier only)
+  open <application>     launch an installed app (performance tier and up)
+  update [--check]       download system updates (ultra-quality tier only)
   explain <file>         plain-language explanation (used by file-safety checks)
 
-The AI is fully optional and never leaves the machine: the runtime binds to
-127.0.0.1 only.
+Abilities shrink with the performance tier; see `tokoro ai capabilities`.
+The AI never leaves the machine: the runtime binds to 127.0.0.1 only.
 EOF
 }
 
@@ -72,10 +82,57 @@ json.dump({"schema": 1, "enabled": sys.argv[2] == "true", "model": sys.argv[3]},
 PY
 }
 
-runtime_ok() {
-  [[ -x "$runtime_wrapper" ]] || return 1
-  [[ ! -f $TOKORO_SHARE/ai/RUNTIME_MISSING ]] || return 1
-  return 0
+# --- capacities and abilities ------------------------------------------------
+runtime_bin() {
+  if [[ -x "$runtime_dir/bin/ollama" ]]; then
+    printf '%s' "$runtime_dir/bin/ollama"
+    return 0
+  fi
+  printf '%s' /usr/bin/tokoro-ollama
+}
+
+runtime_ok() { [[ -x "$(runtime_bin)" ]]; }
+
+caps_for() { # tier -> one capability per line
+  python3 - "$caps_json" "$1" <<'PY'
+import json, sys
+try:
+    data = json.load(open(sys.argv[1]))
+except Exception:
+    raise SystemExit(0)
+for cap in data["tiers"].get(sys.argv[2], []):
+    print(cap)
+PY
+}
+
+min_tier_for() { # capability -> lowest tier that allows it
+  python3 - "$caps_json" "$1" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+order = ["ultra-performance", "performance", "balanced", "quality", "ultra-quality"]
+for tier in order:
+    if sys.argv[2] in data["tiers"].get(tier, []):
+        print(tier)
+        break
+PY
+}
+
+permits() { # capability
+  python3 - "$caps_json" "$(tokoro_current_tier)" "$1" <<'PY'
+import json, sys
+try:
+    data = json.load(open(sys.argv[1]))
+except Exception:
+    raise SystemExit(1)
+raise SystemExit(0 if sys.argv[3] in data["tiers"].get(sys.argv[2], []) else 1)
+PY
+}
+
+require_cap() { # capability description
+  local cap=$1 label=$2 min
+  permits "$cap" && return 0
+  min=$(min_tier_for "$cap")
+  tokoro_die "$label is not available in the $(tokoro_current_tier) tier; it starts at $min. Change tier with: tokoro tier set $min"
 }
 
 api_up() {
@@ -83,6 +140,7 @@ api_up() {
 }
 
 wait_for_api() {
+  local _
   for _ in $(seq 1 30); do
     api_up && return 0
     sleep 1
@@ -91,19 +149,42 @@ wait_for_api() {
 }
 
 cmd_status() {
-  local enabled model runtime
+  local enabled model tier runtime_state api_state caps
+  tier=$(tokoro_current_tier)
   enabled=$(state_field enabled false)
-  model=$(state_field model "$(tier_model "$(tokoro_current_tier)")")
-  if runtime_ok; then runtime="installed"; else runtime="missing"; fi
+  model=$(state_field model "$(tier_model "$tier")")
+  if runtime_ok; then runtime_state="installed"; else runtime_state="missing"; fi
+  api_state="stopped"
+  api_up && api_state="reachable"
+
+  if [[ "${1:-}" == "--json" ]]; then
+    python3 - "$caps_json" "$tier" "$enabled" "$model" "$runtime_state" "$api_state" "$endpoint" <<'PY'
+import json, sys
+caps_path, tier, enabled, model, runtime, api, endpoint = sys.argv[1:8]
+data = json.load(open(caps_path))
+print(json.dumps({
+    "enabled": enabled == "true",
+    "model": model,
+    "tier": tier,
+    "capabilities": data["tiers"].get(tier, []),
+    "runtime": runtime,
+    "api": api,
+    "endpoint": endpoint,
+}, indent=2))
+PY
+    return 0
+  fi
+
+  caps=$(caps_for "$tier" | paste -sd ',' - | sed 's/,/, /g')
   printf 'enabled   : %s\n' "$enabled"
   printf 'model     : Tokoro %s (%s)\n' "$model" "$(model_field "$model" car)"
   printf 'base      : %s\n' "$(model_field "$model" base)"
-  printf 'runtime   : %s\n' "$runtime"
-  local api_state="stopped"
-  api_up && api_state="reachable"
+  printf 'tier      : %s\n' "$tier"
+  printf 'abilities : %s\n' "${caps:-none (chat only)}"
+  printf 'runtime   : %s\n' "$runtime_state"
   printf 'api       : %s (%s)\n' "$api_state" "$endpoint"
-  if [[ "$runtime" == "missing" ]]; then
-    printf 'note      : this image was built without the AI runtime; see /usr/share/tokoro/ai/RUNTIME_MISSING\n'
+  if [[ "$runtime_state" == "missing" ]]; then
+    printf 'note      : the runtime is downloaded the first time AI is turned on\n'
   fi
 }
 
@@ -119,10 +200,52 @@ for key, model in data["models"].items():
 PY
 }
 
+cmd_capabilities() {
+  local tier
+  tier=$(tokoro_current_tier)
+  if [[ "${1:-}" == "--json" ]]; then
+    python3 - "$caps_json" "$tier" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+tier = sys.argv[2]
+order = ["ultra-performance", "performance", "balanced", "quality", "ultra-quality"]
+allowed = data["tiers"].get(tier, [])
+out = {
+    "tier": tier,
+    "allowed": allowed,
+    "capabilities": {
+        name: {
+            "allowed": name in allowed,
+            "min_tier": next((t for t in order if name in data["tiers"].get(t, [])), None),
+            "description": description,
+        }
+        for name, description in data["capabilities"].items()
+    },
+}
+print(json.dumps(out, indent=2))
+PY
+    return 0
+  fi
+  printf 'Tokoro AI abilities at tier %s:\n' "$tier"
+  python3 - "$caps_json" "$tier" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+tier = sys.argv[2]
+order = ["ultra-performance", "performance", "balanced", "quality", "ultra-quality"]
+allowed = data["tiers"].get(tier, [])
+for name, description in data["capabilities"].items():
+    minimum = next((t for t in order if name in data["tiers"].get(t, [])), "-")
+    state = "yes" if name in allowed else f"no, needs {minimum}"
+    print(f"  {name:<8} {state:<26} {description}")
+PY
+  printf '\nTiers: ultra-performance performance balanced quality ultra-quality\n'
+}
+
 ensure_persona() { # model_id
-  local id=$1 base tmp
+  local id=$1 base tmp bin
   base=$(model_field "$id" base)
   [[ -n "$base" ]] || tokoro_die "unknown model: $id"
+  bin=$(runtime_bin)
   tmp=$(mktemp)
   cat >"$tmp" <<EOF
 FROM $base
@@ -135,21 +258,37 @@ When explaining a file or a command, state what it does, what it can change,
 and the realistic worst case. Never invent paths or packages.
 """
 EOF
-  "$runtime_wrapper" pull "$base" && "$runtime_wrapper" create "tokoro:$id" -f "$tmp"
+  "$bin" pull "$base" && "$bin" create "tokoro:$id" -f "$tmp"
   rm -f "$tmp"
 }
 
 cmd_enable() {
-  local system_only=0 model=""
+  local system_only=0 model="" reboot=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --system-only) system_only=1; shift ;;
+      --reboot) reboot=1; shift ;;
       --model) model=${2:-}; shift 2 ;;
-      *) model=$1; shift ;;
+      *)
+        case "$1" in
+          -*) shift ;;
+          *) model=$1; shift ;;
+        esac
+        ;;
     esac
   done
   [[ -n "$model" && "$model" != "auto" ]] || model=$(tier_model "$(tokoro_current_tier)")
-  runtime_ok || tokoro_die "AI runtime is not installed in this image"
+
+  # Download on first use. Declining AI during setup therefore costs nothing.
+  if ! runtime_ok; then
+    tokoro_info "AI runtime is not installed yet; downloading it now (about 1 GB, once)"
+    if tokoro_is_root; then
+      "$TOKORO_EXEC/tokoro-ai-runtime" install
+    else
+      tokoro_as_root "$TOKORO_EXEC/tokoro-ai-runtime" install
+    fi
+  fi
+  runtime_ok || tokoro_die "the AI runtime could not be installed; see: tokoro ai status"
 
   if tokoro_is_root; then
     state_write true "$model"
@@ -160,9 +299,15 @@ cmd_enable() {
 
   if [[ "$system_only" -eq 0 ]]; then
     tokoro_info "waiting for the local runtime..."
-    wait_for_api || tokoro_die "runtime did not come up; check: systemctl status tokoro-ai"
+    if ! wait_for_api; then
+      tokoro_die "runtime did not come up; check: systemctl status tokoro-ai"
+    fi
     ensure_persona "$model"
     tokoro_info "Tokoro AI $model is ready. Try: tokoro ai ask \"what is this distro?\""
+    if [[ "$reboot" -eq 1 ]]; then
+      tokoro_info "rebooting to finish AI setup"
+      tokoro_as_root systemctl reboot
+    fi
   fi
 }
 
@@ -174,7 +319,7 @@ cmd_disable() {
     return 0
   fi
   tokoro_as_root "$TOKORO_EXEC/tokoro-ai" disable --system-only
-  tokoro_info "Tokoro AI disabled. Models stay on disk until you remove them."
+  tokoro_info "Tokoro AI disabled. The runtime and models stay on disk."
 }
 
 cmd_model() {
@@ -211,12 +356,95 @@ except Exception:
     sys.exit(4)'
 }
 
+require_ready() {
+  [[ "$(state_field enabled false)" == "true" ]] || tokoro_die "AI is off; enable it with: tokoro ai enable"
+  api_up || tokoro_die "runtime is not reachable; try: sudo systemctl start tokoro-ai"
+}
+
+active_model() { state_field model "$(tier_model "$(tokoro_current_tier)")"; }
+
 cmd_ask() {
   local prompt=$*
   [[ -n "$prompt" ]] || tokoro_die "usage: tokoro ai ask \"question\""
-  [[ "$(state_field enabled false)" == "true" ]] || tokoro_die "AI is off; enable it with: tokoro ai enable"
-  api_up || tokoro_die "runtime is not reachable; try: sudo systemctl start tokoro-ai"
-  ask_api "$(state_field model "$(tier_model "$(tokoro_current_tier)")")" "$prompt"
+  require_ready
+  ask_api "$(active_model)" "$prompt"
+}
+
+cmd_read() {
+  local file=${1:-} content
+  [[ -n "$file" ]] || tokoro_die "usage: tokoro ai read <file>"
+  require_cap files "reading your files"
+  [[ -r "$file" ]] || tokoro_die "cannot read $file"
+  require_ready
+  content=$(head -c 12000 "$file" 2>/dev/null || true)
+  ask_api "$(active_model)" \
+    "Summarise this file in a few lines. Name anything destructive, privileged or surprising.
+
+$content"
+}
+
+cmd_see() {
+  local prompt=${1:-"Describe what is on the screen and what the user is doing."}
+  local shot req
+  require_cap screen "seeing your screen"
+  require_ready
+  shot=$(mktemp --suffix=.png)
+  if tokoro_have spectacle; then
+    spectacle --background --nonotify --fullscreen --output "$shot" >/dev/null 2>&1 ||
+      tokoro_die "could not capture the screen with spectacle"
+  elif tokoro_have grim; then
+    grim "$shot" >/dev/null 2>&1 || tokoro_die "could not capture the screen with grim"
+  else
+    tokoro_die "no screenshot tool available (install spectacle or grim)"
+  fi
+  req=$(mktemp)
+  python3 - "$shot" "$(active_model)" "$prompt" >"$req" <<'PY'
+import base64, json, sys
+shot, model, prompt = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(shot, "rb") as fh:
+    image = base64.b64encode(fh.read()).decode()
+print(json.dumps({"model": f"tokoro:{model}", "prompt": prompt,
+                  "images": [image], "stream": False}))
+PY
+  curl -fsS --max-time 180 "$endpoint/api/generate" \
+    -H 'Content-Type: application/json' --data-binary @"$req" |
+    python3 -c 'import json,sys
+try:
+    print(json.load(sys.stdin).get("response","").strip())
+except Exception:
+    sys.exit(4)'
+  rm -f "$shot" "$req"
+}
+
+cmd_open() {
+  local app=${1:-}
+  [[ -n "$app" ]] || tokoro_die "usage: tokoro ai open <application>"
+  require_cap apps "opening applications"
+  if tokoro_have gtk-launch && gtk-launch "$app" >/dev/null 2>&1; then
+    tokoro_info "opened $app"
+    return 0
+  fi
+  if tokoro_have kioclient6 && kioclient6 exec "$app" >/dev/null 2>&1; then
+    tokoro_info "opened $app"
+    return 0
+  fi
+  tokoro_die "could not launch $app (unknown application id?)"
+}
+
+cmd_update() {
+  require_cap updates "downloading system updates"
+  tokoro_have rpm-ostree || tokoro_die "rpm-ostree is not available on this system"
+  if [[ "${1:-}" == "--check" ]]; then
+    rpm-ostree upgrade --check
+    return 0
+  fi
+  tokoro_as_root rpm-ostree upgrade
+}
+
+cmd_permits() {
+  local cap=${1:-}
+  [[ -n "$cap" ]] || tokoro_die "usage: tokoro ai permits <capability>"
+  permits "$cap"
 }
 
 cmd_explain() {
@@ -229,12 +457,18 @@ main() {
   local cmd=${1:-status}
   shift || true
   case "$cmd" in
-    status) cmd_status ;;
+    status) cmd_status "${1:-}" ;;
     models) cmd_models ;;
+    capabilities) cmd_capabilities "${1:-}" ;;
+    permits) cmd_permits "${1:-}" ;;
     enable) cmd_enable "$@" ;;
     disable) cmd_disable "$@" ;;
     model) cmd_model "$@" ;;
     ask) cmd_ask "$@" ;;
+    read) cmd_read "$@" ;;
+    see) cmd_see "$@" ;;
+    open) cmd_open "$@" ;;
+    update) cmd_update "$@" ;;
     explain) cmd_explain "$@" ;;
     -h | --help | help) usage ;;
     *) usage; exit 2 ;;

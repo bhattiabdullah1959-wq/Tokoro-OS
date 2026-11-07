@@ -18,7 +18,7 @@ warning, never a half-branded image.
 | `00-preflight.sh` | Verifies assumptions about the base image and tooling |
 | `10-branding.sh` | os-release/version metadata, KDE assets, upstream name cleanup |
 | `20-terminal-banner.sh` | Rewrites every banner surface to Tokoro OS |
-| `30-ai-runtime.sh` | Installs the pinned Ollama runtime (or a clear marker) |
+| `30-ai-runtime.sh` | Prepares AI directories only; the runtime downloads on first opt-in |
 | `40-acer-support.sh` | Verifies Acer units/rules/helpers and the hardware gate |
 | `50-release-metadata.sh` | `/etc/tokoro/version`, `/etc/issue`, release.json copy |
 
@@ -31,7 +31,10 @@ warning, never a half-branded image.
 /usr/libexec/tokoro/tokoro-tier      tier engine (bash)
 /usr/libexec/tokoro/tokoro-mode      work/gaming toggle
 /usr/libexec/tokoro/tokoro-wizard    first-boot wizard (Python, kdialog/CLI)
-/usr/libexec/tokoro/tokoro-ai        local AI control
+/usr/libexec/tokoro/tokoro-ai        local AI control (tier-gated abilities)
+/usr/libexec/tokoro/tokoro-ai-runtime  downloads/removes the runtime on demand
+/usr/libexec/tokoro/tokoro-ai-serve  service entry point for the runtime
+/usr/libexec/tokoro/tokoro-drivers   missing-driver and firmware scan
 /usr/libexec/tokoro/tokoro-fileguard file-safety explanations
 /usr/libexec/tokoro/tokoro-games     compatibility database CLI
 /usr/libexec/tokoro/tokoro-bench     benchmark + gaming mode
@@ -42,6 +45,7 @@ warning, never a half-branded image.
 /usr/share/tokoro/release.json       version + car codenames (single source)
 /usr/share/tokoro/games/games.json   compatibility dataset
 /usr/share/tokoro/ai/models.json     the five AI models and tier mapping
+/usr/share/tokoro/ai/capabilities.json  which abilities each tier keeps
 ```
 
 ## State
@@ -51,6 +55,8 @@ warning, never a half-branded image.
 | `/etc/tokoro/tier.conf` | root | current tier, recommendation, override flag |
 | `/etc/tokoro/features.json` | root | wizard result (features, apps) |
 | `/etc/tokoro/ai.json` | root | AI enabled + active model |
+| `/var/lib/tokoro/ai/runtime` | root | Ollama, downloaded the first time AI is turned on |
+| `/var/lib/tokoro/ai/models` | root | downloaded models (kept when AI is turned off) |
 | `~/.config/tokoro/tier.json` | user | applet state, passive warning flag |
 | `~/.config/tokoro/mode` | user | `work` or `gaming` |
 | `~/.local/state/tokoro/bench/last.json` | user | last benchmark result |

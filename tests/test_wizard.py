@@ -87,6 +87,22 @@ def main() -> int:
                 print(f"FAIL: {name} (plan: {json.dumps(plan)})")
                 failures += 1
 
+    # AI is opt-in: an answer file that never mentions it must leave it off, so
+    # setup downloads no runtime.
+    with tempfile.TemporaryDirectory() as raw:
+        tmp = Path(raw)
+        plan = plan_for({"tier": "quality"}, tmp)
+        checks = [
+            ("AI is opt-in (off unless asked)", plan["features"]["ai"] is False),
+            ("AI model stays auto when AI is off", plan["ai_model"] == "auto"),
+        ]
+        for name, ok in checks:
+            if ok:
+                print(f"ok: {name}")
+            else:
+                print(f"FAIL: {name} (plan: {json.dumps(plan)})")
+                failures += 1
+
     # A dry run must not write system state.
     if (Path(tempfile.gettempdir()) / "nonexistent-tokoro-state").exists():
         print("FAIL: unexpected state write")

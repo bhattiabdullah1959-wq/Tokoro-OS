@@ -88,16 +88,18 @@ for tool in kwriteconfig6 qdbus6; do
 done
 
 section "Local AI"
-if [[ -f $TOKORO_SHARE/ai/RUNTIME_MISSING ]]; then
-  notice "image built without the AI runtime: $(cat "$TOKORO_SHARE/ai/RUNTIME_MISSING")"
-elif [[ -x /usr/bin/tokoro-ollama ]]; then
+runtime_state=$("$TOKORO_EXEC/tokoro-ai-runtime" status 2>/dev/null | head -n1 || echo missing)
+if [[ "$runtime_state" == "installed" ]]; then
   ok "AI runtime installed"
+elif [[ -f $TOKORO_SHARE/ai/RUNTIME_MISSING ]]; then
+  notice "image built without the AI runtime: $(cat "$TOKORO_SHARE/ai/RUNTIME_MISSING")"
 else
-  notice "AI runtime not present"
+  notice "AI runtime not downloaded yet (fetched when AI is turned on)"
 fi
 if [[ -r $TOKORO_ETC/ai.json ]]; then
   enabled=$("$TOKORO_EXEC/tokoro-ai" status 2>/dev/null | awk -F': ' '/^enabled/{print $2}')
-  ok "AI configured (enabled: ${enabled:-unknown})"
+  abilities=$("$TOKORO_EXEC/tokoro-ai" status 2>/dev/null | awk -F': ' '/^abilities/{print $2}')
+  ok "AI configured (enabled: ${enabled:-unknown}; abilities: ${abilities:-unknown})"
 else
   notice "AI not configured (opt-in; tokoro ai enable)"
 fi

@@ -71,6 +71,9 @@ if command -v shellcheck >/dev/null 2>&1; then
     "$ROOT"/files/system/usr/libexec/tokoro/tokoro-tier \
     "$ROOT"/files/system/usr/libexec/tokoro/tokoro-mode \
     "$ROOT"/files/system/usr/libexec/tokoro/tokoro-ai \
+    "$ROOT"/files/system/usr/libexec/tokoro/tokoro-ai-runtime \
+    "$ROOT"/files/system/usr/libexec/tokoro/tokoro-ai-serve \
+    "$ROOT"/files/system/usr/libexec/tokoro/tokoro-drivers \
     "$ROOT"/files/system/usr/libexec/tokoro/tokoro-acer \
     "$ROOT"/files/system/usr/libexec/tokoro/tokoro-doctor; do
     [[ -f "$script" ]] || continue
@@ -101,6 +104,9 @@ run "banner: fixture tree" bash "$ROOT/tests/test_banner.sh"
 
 section "Wizard"
 run "wizard: dry-run plan" python3 "$ROOT/tests/test_wizard.py"
+
+section "Local AI"
+run "ai: capabilities and refusals" bash "$ROOT/tests/test_ai_caps.sh"
 
 section "Games + benchmark"
 run "games: dataset" python3 "$ROOT/tests/test_games.py"

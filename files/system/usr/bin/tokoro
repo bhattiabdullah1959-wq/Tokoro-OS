@@ -17,7 +17,8 @@ Usage: tokoro <command> [args]
   tier               five-tier performance system (show/list/detect/set/reset)
   mode               work/gaming toggle
   wizard             first-boot wizard (hardware, tier, features, apps)
-  ai                 local on-device AI (status/models/enable/ask/explain)
+  ai                 local on-device AI (status/models/capabilities/enable/see/open)
+  drivers            scan for missing drivers and firmware updates
   fileguard <file>   explain what a file does before you run it
   games              game compatibility database (list/info/excluded/stats)
   bench              benchmark (run/play <game>)
@@ -69,6 +70,7 @@ main() {
     bench) exec "$TOKORO_EXEC/tokoro-bench" "$@" ;;
     smarthome) exec "$TOKORO_EXEC/tokoro-smarthome" "$@" ;;
     acer) exec "$TOKORO_EXEC/tokoro-acer" "$@" ;;
+    drivers) exec "$TOKORO_EXEC/tokoro-drivers" "$@" ;;
     lean) cmd_lean "$@" ;;
     -h | --help | help) usage ;;
     *)

@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# tokoro-drivers — find hardware without a driver and firmware that needs updating.
+#
+# Read-only: this tool never installs anything, it reports what is missing and
+# what the fix is, so a user (or the assistant) can act deliberately.
+set -euo pipefail
+
+# shellcheck source=tokoro-lib.sh
+. "${TOKORO_EXEC:-/usr/libexec/tokoro}/tokoro-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: tokoro drivers [scan] [--json] [--notify]
+
+  scan      devices without a kernel driver, firmware complaints and available
+            firmware updates, plus how to fix them
+  --json    machine readable output
+  --notify  send the summary as a desktop notification
+
+Exit status is always 0: this is a report, not a gate.
+EOF
+}
+
+unclaimed_devices() {
+  tokoro_have lspci || return 0
+  lspci -k 2>/dev/null | awk '
+    /^[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]\.[0-9]/ {
+      if (device != "" && driver == "") print device
+      device = $0
+      driver = ""
+      next
+    }
+    /Kernel driver in use:/ { driver = $0 }
+    END { if (device != "" && driver == "") print device }
+  ' | sed 's/^ *//'
+}
+
+firmware_complaints() {
+  tokoro_have journalctl || return 0
+  journalctl -k -b --no-pager 2>/dev/null |
+    grep -iE 'failed to load firmware|firmware.*(not found|failed)' |
+    tail -n 5 || true
+}
+
+firmware_updates() {
+  tokoro_have fwupdmgr || return 0
+  if tokoro_have timeout; then
+    timeout 25 fwupdmgr get-updates 2>/dev/null | head -n 20 || true
+  else
+    fwupdmgr get-updates 2>/dev/null | head -n 20 || true
+  fi
+}
+
+gpu_hint() {
+  tokoro_have lspci || return 0
+  lspci 2>/dev/null | grep -qi 'nvidia' || return 0
+  if tokoro_have lsmod && lsmod 2>/dev/null | grep -q '^nvidia'; then
+    return 0
+  fi
+  printf 'NVIDIA GPU present but no nvidia module is loaded\n'
+  printf 'use the tokoro-os-nvidia image, or layer akmod-nvidia for this kernel\n'
+}
+
+cmd_scan() {
+  local as_json=0 notify=0 arg
+  for arg in "$@"; do
+    case "$arg" in
+      --json) as_json=1 ;;
+      --notify) notify=1 ;;
+      *) ;;
+    esac
+  done
+
+  local devices complaints updates hints
+  devices=$(unclaimed_devices)
+  complaints=$(firmware_complaints)
+  updates=$(firmware_updates)
+  hints=$(gpu_hint)
+
+  if [[ "$as_json" -eq 1 ]]; then
+    python3 - "$devices" "$complaints" "$updates" "$hints" <<'PY'
+import json, sys
+
+def lines(text: str) -> list[str]:
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+devices, complaints, updates, hints = sys.argv[1:5]
+print(json.dumps({
+    "schema": 1,
+    "unclaimed_devices": lines(devices),
+    "firmware_complaints": lines(complaints),
+    "firmware_updates": lines(updates),
+    "notes": lines(hints),
+    "clean": not lines(devices) and not lines(complaints) and not lines(hints),
+}, indent=2))
+PY
+    return 0
+  fi
+
+  printf 'Tokoro driver scan\n'
+  if [[ -z "$devices" ]]; then
+    printf '  [ ok ] every PCI device has a kernel driver in use\n'
+  else
+    printf '  [warn] devices with no driver:\n'
+    printf '%s\n' "$devices" | sed 's/^/         /'
+    printf '         fix: sudo rpm-ostree install <driver package>, or use the image\n'
+    printf '         matching this GPU (tokoro-os vs tokoro-os-nvidia)\n'
+  fi
+
+  if [[ -n "$hints" ]]; then
+    printf '%s\n' "$hints" | sed 's/^/  [warn] /'
+  fi
+
+  if [[ -n "$complaints" ]]; then
+    printf '  [warn] kernel firmware complaints:\n'
+    printf '%s\n' "$complaints" | sed 's/^/         /'
+  else
+    printf '  [ ok ] no firmware load failures in this boot\n'
+  fi
+
+  if [[ -n "$updates" ]]; then
+    printf '  [info] firmware updates reported by fwupd:\n'
+    printf '%s\n' "$updates" | sed 's/^/         /'
+    printf '         apply with: fwupdmgr update\n'
+  else
+    printf '  [info] fwupd reports no pending firmware updates\n'
+  fi
+
+  if [[ "$notify" -eq 1 ]] && tokoro_have notify-send; then
+    local summary="No missing drivers found"
+    if [[ -n "$devices" || -n "$hints" ]]; then
+      summary="Some hardware needs attention — run: tokoro drivers scan"
+    fi
+    notify-send --appname "Tokoro OS" --icon "preferences-system" \
+      "Driver scan" "$summary" || true
+  fi
+}
+
+main() {
+  local cmd=${1:-scan}
+  shift || true
+  case "$cmd" in
+    scan) cmd_scan "$@" ;;
+    -h | --help | help) usage ;;
+    *) usage; exit 2 ;;
+  esac
+}
+
+main "$@"
