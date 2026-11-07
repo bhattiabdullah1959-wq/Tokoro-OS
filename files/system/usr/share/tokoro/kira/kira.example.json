@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "devices": {
+    "desk-light": {
+      "address": "AA:BB:CC:DD:EE:01",
+      "profile": "generic-onoff",
+      "on_char": "0000fff1-0000-1000-8000-00805f9b34fb",
+      "off_char": "0000fff2-0000-1000-8000-00805f9b34fb",
+      "on_value": "01",
+      "off_value": "00"
+    },
+    "monitor-bias-light": {
+      "address": "AA:BB:CC:DD:EE:02",
+      "profile": "generic-onoff",
+      "on_char": "0000fff1-0000-1000-8000-00805f9b34fb",
+      "off_char": "0000fff2-0000-1000-8000-00805f9b34fb"
+    }
+  },
+  "scenes": {
+    "work": ["desk-light:on", "monitor-bias-light:on"],
+    "gaming": ["desk-light:off", "monitor-bias-light:on"]
+  }
+}

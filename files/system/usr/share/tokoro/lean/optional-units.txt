@@ -1,0 +1,21 @@
+# Tokoro OS is lean by default: these units stay enabled unless you disable them.
+# `tokoro lean disable <unit>` only accepts units from this curated list, so a
+# typo can never take something important offline.
+#
+# Format: one unit per line, comments and blanks ignored.
+
+# Printing (enable when you actually print)
+cups.service
+cups-browsed.service
+
+# Bluetooth (disable on desktops without peripherals)
+bluetooth.service
+
+# Modem / WWAN helpers that do nothing on most desktops
+ModemManager.service
+
+# Remote desktop helpers
+gnome-remote-desktop.service
+
+# Upstream Bazzite convenience services that are not needed for a lean install
+bazzite-system-update-notifier.service

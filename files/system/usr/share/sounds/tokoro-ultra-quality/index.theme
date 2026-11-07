@@ -1,0 +1,9 @@
+[Sound Theme]
+Name=Tokoro Ultra Quality
+Comment=Rich cues for the Ultra Quality tier
+Inherits=freedesktop
+Example=bell
+Directories=stereo
+
+[stereo]
+OutputProfile=stereo

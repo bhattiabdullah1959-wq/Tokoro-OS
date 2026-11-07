@@ -1,0 +1,257 @@
+#!/usr/bin/env bash
+# tokoro-tier — the five-tier performance system.
+set -euo pipefail
+
+# shellcheck source=tokoro-lib.sh
+. "${TOKORO_EXEC:-/usr/libexec/tokoro}/tokoro-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: tokoro tier [command]
+
+  show                     current tier, recommendation and warning state
+  list                     all tiers with their cars
+  detect [--save]          re-run hardware detection (optionally store result)
+  set <tier> [--no-apply]  switch tier (system + desktop settings)
+  apply                    re-apply the current tier's settings
+  status --json            machine readable state for scripts/applets
+  reset                    go back to the hardware recommendation
+
+Tiers: ultra-performance performance balanced quality ultra-quality
+EOF
+}
+
+cmd_show() {
+  local cur rec
+  cur=$(tokoro_current_tier)
+  rec=$(tokoro_recommended_tier)
+  tokoro_tier_load "$cur"
+  printf 'Tokoro OS %s (%s)\n' "$(tokoro_version)" "$(tokoro_release_get codename 2>/dev/null || echo '')"
+  printf '  tier          : %s (%s)\n' "$cur" "$(tokoro_tier_label "$cur")"
+  printf '  car           : %s\n' "$(tokoro_release_get "tiers.$cur.car" 2>/dev/null || echo '')"
+  printf '  recommended   : %s\n' "${rec:-not detected yet}"
+  printf '  power profile : %s\n' "${TIER_POWER:-unknown}"
+  printf '  AI model      : Tokoro %s\n' "${TIER_AI:-?}"
+  if tokoro_is_above_recommendation; then
+    printf '  !             : above hardware recommendation (warning is passive)\n'
+  fi
+  if tokoro_is_overridden; then
+    printf '  override      : yes\n'
+  fi
+}
+
+cmd_list() {
+  local t
+  for t in "${TOKORO_TIERS[@]}"; do
+    printf '%-18s %-16s %s\n' "$t" "$(tokoro_tier_label "$t")" \
+      "$(tokoro_release_get "tiers.$t.car" 2>/dev/null || echo '')"
+  done
+}
+
+cmd_detect() {
+  local save=0
+  [[ "${1:-}" == "--save" ]] && save=1
+  "${TOKORO_EXEC}/tokoro-detect-hardware" --explain
+  if [[ "$save" -eq 1 ]]; then
+    local tier
+    tier=$("${TOKORO_EXEC}/tokoro-detect-hardware" --tier)
+    if ! tokoro_is_root; then
+      tokoro_warn "run with sudo to store the recommendation system-wide"
+      tokoro_user_state_write "$(tokoro_current_tier)" "$tier"
+      return 0
+    fi
+    tokoro_state_load || true
+    TOKORO_RECOMMENDED="$tier"
+    [[ -n "${TOKORO_TIER:-}" ]] || TOKORO_TIER="$tier"
+    TOKORO_SET_BY="detect"
+    tokoro_state_save
+    tokoro_user_state_write "$(tokoro_current_tier)" "$tier"
+    printf 'recommendation stored: %s\n' "$tier"
+  fi
+}
+
+apply_system() {
+  local tier=$1
+  tokoro_tier_load "$tier"
+
+  # Power profile: powerprofiles-daemon if present, platform_profile otherwise.
+  if tokoro_have powerprofilesctl; then
+    if ! powerprofilesctl set "${TIER_POWER}" 2>/dev/null; then
+      tokoro_warn "could not set power profile ${TIER_POWER}"
+    fi
+  fi
+  local pp=/sys/firmware/acpi/platform_profile
+  if [[ -w "$pp" ]]; then
+    case "${TIER_POWER}" in
+      performance) printf 'performance' >"$pp" 2>/dev/null || true ;;
+      power-saver) printf 'low-power' >"$pp" 2>/dev/null || true ;;
+      *) printf 'balanced' >"$pp" 2>/dev/null || true ;;
+    esac
+  fi
+
+  # Energy performance preference, where the cpufreq driver exposes it.
+  local epp="/sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference"
+  local f
+  for f in $epp; do
+    [[ -w "$f" ]] || continue
+    printf '%s' "${TIER_EPP}" >"$f" 2>/dev/null || true
+  done
+
+  # Acer performance mode follows the tier on supported laptops.
+  if "${TOKORO_EXEC}/tokoro-acer" detect >/dev/null 2>&1; then
+    "${TOKORO_EXEC}/tokoro-acer" mode --quiet "${TIER_ACER_MODE:-balanced}" || true
+  fi
+}
+
+apply_user() {
+  local tier=$1
+  tokoro_tier_load "$tier"
+
+  # KWin animation speed (0 = instant), effects and blur.
+  tokoro_kwrite kwinrc Compositing AnimationSpeed "${TIER_ANIM}" || true
+  tokoro_kwrite kwinrc Compositing AllowTearing \
+    "$([[ "${TIER_ALLOW_TEARING:-0}" == "1" ]] && echo true || echo false)" || true
+  tokoro_kwrite kwinrc Plugins blurEnabled \
+    "$([[ "${TIER_BLUR}" == "1" ]] && echo true || echo false)" || true
+  tokoro_kwrite kwinrc Plugins wobblywindowsEnabled \
+    "$([[ "${TIER_EFFECTS}" == "1" ]] && echo true || echo false)" || true
+  tokoro_kwrite kwinrc Plugins magiclampEnabled \
+    "$([[ "${TIER_EFFECTS}" == "1" ]] && echo true || echo false)" || true
+
+  # Sound theme + wallpaper belong to the tier's car.
+  tokoro_kwrite kdeglobals General SoundThemeName "tokoro-$tier" || true
+  tokoro_wallpaper_set "${TIER_WALLPAPER:-/usr/share/tokoro/wallpapers/tokoro-$tier.svg}"
+
+  tokoro_kwin_reconfigure || tokoro_warn "KWin not running; effects apply after next login"
+  if tokoro_have notify-send; then
+    notify-send --appname "Tokoro OS" --icon "preferences-system-performance" \
+      "Tier: $(tokoro_tier_label "$tier")" \
+      "$(tokoro_release_get "tiers.$tier.car" 2>/dev/null || echo '')" || true
+  fi
+}
+
+tokoro_wallpaper_set() {
+  local image=$1
+  [[ -f "$image" ]] || { tokoro_warn "wallpaper missing: $image"; return 0; }
+  tokoro_have qdbus6 || tokoro_have qdbus || return 0
+  local script
+  script=$(mktemp --suffix=.js)
+  cat >"$script" <<JS
+var ds = desktops();
+for (var i = 0; i < ds.length; i++) {
+    var d = ds[i];
+    d.wallpaperPlugin = "org.kde.image";
+    d.currentConfigGroup = ["Wallpaper", "org.kde.image", "General"];
+    d.writeConfig("Image", "file://$image");
+    d.writeConfig("FillMode", 2);
+}
+JS
+  if tokoro_have qdbus6; then
+    qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript \
+      "$(cat "$script")" >/dev/null 2>&1 ||
+      tokoro_warn "could not set wallpaper via plasmashell"
+  else
+    qdbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript \
+      "$(cat "$script")" >/dev/null 2>&1 ||
+      tokoro_warn "could not set wallpaper via plasmashell"
+  fi
+  rm -f "$script"
+}
+
+cmd_set() {
+  local tier=${1:-}
+  local no_apply=0
+  [[ "${2:-}" == "--no-apply" ]] && no_apply=1
+  [[ -n "$tier" ]] || tokoro_die "usage: tokoro tier set <tier>"
+  tokoro_tier_valid "$tier" || tokoro_die "unknown tier: $tier"
+
+  if ! tokoro_is_root; then
+    # System state is root owned; re-exec through pkexec with an explicit marker.
+    tokoro_as_root /usr/libexec/tokoro/tokoro-tier __apply-root "$tier" "$no_apply" || return $?
+    # Desktop settings must be written as the invoking user, never as root.
+    tokoro_user_state_write "$tier" "$(tokoro_recommended_tier)" \
+      "$(tokoro_is_overridden && echo 1 || echo 0)"
+    [[ "$no_apply" -eq 1 ]] || apply_user "$tier"
+  else
+    __apply_root "$tier" "$no_apply"
+  fi
+}
+
+__apply_root() {
+  local tier=$1 no_apply=$2 rec
+  tokoro_require_root
+  rec=$(tokoro_recommended_tier)
+  [[ -n "$rec" ]] || rec=$(detect_tier)
+  tokoro_state_load || true
+  TOKORO_TIER="$tier"
+  TOKORO_RECOMMENDED="$rec"
+  if [[ "$tier" == "$rec" ]]; then
+    TOKORO_OVERRIDE=0
+  else
+    TOKORO_OVERRIDE=1
+  fi
+  TOKORO_SET_BY="${TOKORO_SET_BY:-cli}"
+  export TOKORO_TIER TOKORO_RECOMMENDED TOKORO_OVERRIDE TOKORO_SET_BY
+  tokoro_state_save
+  tokoro_user_state_write "$tier" "$rec" "$TOKORO_OVERRIDE"
+  [[ "$no_apply" -eq 1 ]] || apply_system "$tier"
+}
+
+detect_tier() {
+  if "${TOKORO_EXEC}/tokoro-detect-hardware" --tier 2>/dev/null; then
+    return 0
+  fi
+  printf 'balanced'
+}
+
+cmd_reset() {
+  local rec
+  rec=$(detect_tier)
+  tokoro_as_root /usr/libexec/tokoro/tokoro-tier __apply-root "$rec" 0
+  printf 'reset to recommendation: %s\n' "$rec"
+}
+
+cmd_status() {
+  local cur rec warn=false over
+  cur=$(tokoro_current_tier)
+  rec=$(tokoro_recommended_tier)
+  over=$(tokoro_is_overridden && echo true || echo false)
+  tokoro_is_above_recommendation && warn=true || true
+  python3 - "$cur" "${rec:-}" "$over" "$warn" "$(tokoro_version)" <<'PY'
+import json, sys
+tier, rec, over, warn, version = sys.argv[1:6]
+print(json.dumps({
+    "tier": tier,
+    "recommended": rec or None,
+    "overridden": over == "true",
+    "above_recommendation": warn == "true",
+    "version": version,
+}, indent=2))
+PY
+}
+
+main() {
+  local cmd=${1:-show}
+  shift || true
+  case "$cmd" in
+    show) cmd_show ;;
+    list) cmd_list ;;
+    detect) cmd_detect "${1:-}" ;;
+    set) cmd_set "${1:-}" "${2:-}" ;;
+    apply)
+      if tokoro_is_root; then
+        apply_system "$(tokoro_current_tier)"
+      else
+        tokoro_as_root /usr/libexec/tokoro/tokoro-tier __apply-root "$(tokoro_current_tier)" 0
+        apply_user "$(tokoro_current_tier)"
+      fi
+      ;;
+    reset) cmd_reset ;;
+    status) cmd_status ;;
+    __apply-root) __apply_root "${1:-}" "${2:-0}" ;;
+    -h | --help | help) usage ;;
+    *) usage; exit 2 ;;
+  esac
+}
+
+main "$@"

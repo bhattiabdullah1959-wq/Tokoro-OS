@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+"""tokoro-games — browse the compatibility dataset and per-tier expectations."""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+
+SHARE = os.environ.get("TOKORO_SHARE", "/usr/share/tokoro")
+DATASET = os.path.join(SHARE, "games", "games.json")
+OVERLAY = os.path.join(
+    os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")),
+    "tokoro", "games-overlay.json")
+TIERS = ["ultra-performance", "performance", "balanced", "quality", "ultra-quality"]
+RATINGS = ["green", "yellow", "orange", "red"]
+
+# Expected frame-rate band by tier and game weight. These are planning estimates
+# for a 1080p/high baseline, not a promise for any specific title.
+EXPECTATIONS = {
+    "light": ["45-60", "60-90", "90-120", "120-144", "144+"],
+    "medium": ["30-45", "45-60", "60-90", "90-120", "120+"],
+    "heavy": ["20-30", "30-45", "45-60", "60-90", "90+"],
+}
+
+
+def load() -> dict:
+    with open(DATASET, encoding="utf-8") as fh:
+        data = json.load(fh)
+    games = {g["id"]: g for g in data["games"]}
+    if os.path.exists(OVERLAY):
+        try:
+            with open(OVERLAY, encoding="utf-8") as fh:
+                extra = json.load(fh)
+            for game in extra.get("games", []):
+                games[game["id"]] = game
+        except (json.JSONDecodeError, KeyError):
+            print(f"warning: ignoring invalid overlay {OVERLAY}", file=sys.stderr)
+    return {"games": games, "excluded": data.get("excluded", [])}
+
+
+def current_tier() -> str:
+    state = os.environ.get("TOKORO_STATE_FILE", "/etc/tokoro/tier.conf")
+    try:
+        with open(state, encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("TOKORO_TIER="):
+                    return line.split("=", 1)[1].strip().strip("\"'")
+    except OSError:
+        pass
+    return "balanced"
+
+
+def find(games: dict, needle: str) -> dict | None:
+    if needle in games:
+        return games[needle]
+    lowered = needle.lower()
+    for game in games.values():
+        if game["name"].lower() == lowered:
+            return game
+    for game in games.values():
+        if lowered in game["name"].lower():
+            return game
+    return None
+
+
+def cmd_list(args: argparse.Namespace, data: dict) -> int:
+    games = list(data["games"].values())
+    if args.rating:
+        games = [g for g in games if g["rating"] == args.rating]
+    if args.search:
+        games = [g for g in games if args.search.lower() in g["name"].lower()]
+    games.sort(key=lambda g: g["name"].lower())
+    for game in games[: args.limit]:
+        note = f"  ({game['note']})" if game.get("note") else ""
+        print(f"{game['rating']:<7} {game['weight']:<7} {game['name']}{note}")
+    print(f"\n{len(games)} game(s)")
+    return 0
+
+
+def cmd_info(args: argparse.Namespace, data: dict) -> int:
+    game = find(data["games"], args.game)
+    if args.json:
+        print(json.dumps(game if game else {"error": "not found", "query": args.game}, indent=2))
+        return 0 if game else 1
+    if not game:
+        excluded = next((e for e in data["excluded"] if args.game.lower() in e["name"].lower()), None)
+        if excluded:
+            print(f"{excluded['name']}: EXCLUDED — {excluded['reason']}")
+            return 0
+        print(f"no entry for {args.game!r}; `tokoro games list` shows what is covered")
+        return 1
+    print(f"{game['name']} ({game['id']})")
+    print(f"  rating    : {game['rating']}")
+    print(f"  weight    : {game['weight']}")
+    print(f"  anti-cheat: {game.get('anticheat', 'none')}")
+    if game.get("note"):
+        print(f"  note      : {game['note']}")
+    tier = args.tier or current_tier()
+    band = EXPECTATIONS.get(game["weight"], EXPECTATIONS["medium"])[TIERS.index(tier)]
+    print(f"  {tier}: roughly {band} fps at 1080p high")
+    return 0
+
+
+def cmd_excluded(_: argparse.Namespace, data: dict) -> int:
+    for entry in data["excluded"]:
+        print(f"{entry['name']}: {entry['reason']}")
+    return 0
+
+
+def cmd_stats(_: argparse.Namespace, data: dict) -> int:
+    counts = {rating: 0 for rating in RATINGS}
+    weights = {"light": 0, "medium": 0, "heavy": 0}
+    for game in data["games"].values():
+        counts[game["rating"]] = counts.get(game["rating"], 0) + 1
+        weights[game["weight"]] = weights.get(game["weight"], 0) + 1
+    print(f"games rated : {len(data['games'])}")
+    for rating in RATINGS:
+        print(f"  {rating:<7} {counts[rating]}")
+    print(f"excluded    : {len(data['excluded'])}")
+    print(f"weights     : {weights}")
+    if len(data["games"]) < 1000:
+        print("\nThis is the curated seed dataset. `tokoro games import <file>` merges a "
+              "larger list with the same schema (docs/games.md).")
+    return 0
+
+
+def validate(path: str) -> int:
+    errors: list[str] = []
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    if data.get("schema") != 1:
+        errors.append("schema must be 1")
+    seen: set[str] = set()
+    for index, game in enumerate(data.get("games", [])):
+        for field in ("id", "name", "rating", "weight"):
+            if not game.get(field):
+                errors.append(f"game[{index}] missing {field}")
+        if game.get("rating") not in RATINGS:
+            errors.append(f"game[{index}] invalid rating {game.get('rating')!r}")
+        if game.get("weight") not in EXPECTATIONS:
+            errors.append(f"game[{index}] invalid weight {game.get('weight')!r}")
+        if game.get("id") in seen:
+            errors.append(f"duplicate id {game.get('id')}")
+        seen.add(game.get("id"))
+    for entry in data.get("excluded", []):
+        if not entry.get("name") or not entry.get("reason"):
+            errors.append("excluded entries need name and reason")
+    if errors:
+        for error in errors:
+            print(f"ERROR: {error}", file=sys.stderr)
+        return 1
+    print(f"ok: {len(data.get('games', []))} games, {len(data.get('excluded', []))} excluded")
+    return 0
+
+
+def cmd_import(args: argparse.Namespace, _: dict) -> int:
+    if validate(args.file) != 0:
+        return 1
+    os.makedirs(os.path.dirname(OVERLAY), exist_ok=True)
+    with open(args.file, encoding="utf-8") as fh:
+        data = json.load(fh)
+    with open(OVERLAY, "w", encoding="utf-8") as fh:
+        json.dump({"schema": 1, "games": data["games"]}, fh, indent=2)
+        fh.write("\n")
+    print(f"imported {len(data['games'])} games into {OVERLAY}")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Tokoro game compatibility database")
+    sub = parser.add_subparsers(dest="cmd")
+
+    p = sub.add_parser("list", help="list games, optionally filtered")
+    p.add_argument("--rating", choices=RATINGS)
+    p.add_argument("--search")
+    p.add_argument("--limit", type=int, default=40)
+
+    p = sub.add_parser("info", help="show one game")
+    p.add_argument("game")
+    p.add_argument("--tier", choices=TIERS)
+    p.add_argument("--json", action="store_true")
+
+    sub.add_parser("excluded", help="list anti-cheat exclusions")
+    sub.add_parser("stats", help="dataset summary")
+
+    p = sub.add_parser("validate", help="validate a dataset file")
+    p.add_argument("file", nargs="?", default=DATASET)
+
+    p = sub.add_parser("import", help="merge a larger dataset as a user overlay")
+    p.add_argument("file")
+
+    args = parser.parse_args()
+    if args.cmd == "validate":
+        return validate(args.file)
+    data = load()
+    if args.cmd in (None, "list"):
+        return cmd_list(args, data)
+    if args.cmd == "info":
+        return cmd_info(args, data)
+    if args.cmd == "excluded":
+        return cmd_excluded(args, data)
+    if args.cmd == "stats":
+        return cmd_stats(args, data)
+    if args.cmd == "import":
+        return cmd_import(args, data)
+    parser.print_help()
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

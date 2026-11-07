@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "runtime": {
+    "binary": "/usr/bin/tokoro-ollama",
+    "endpoint": "http://127.0.0.1:11435",
+    "service": "tokoro-ai.service"
+  },
+  "tier_defaults": {
+    "ultra-performance": "0.6",
+    "performance": "2",
+    "balanced": "3",
+    "quality": "4.8",
+    "ultra-quality": "5"
+  },
+  "models": {
+    "0.6": {
+      "display": "Tokoro 0.6",
+      "car": "Suzuki Cappuccino",
+      "base": "qwen2.5:0.5b",
+      "download_gb": 0.4,
+      "min_ram_gb": 4,
+      "context": 4096
+    },
+    "2": {
+      "display": "Tokoro 2",
+      "car": "Nissan Silvia S14",
+      "base": "qwen2.5:1.5b",
+      "download_gb": 1.0,
+      "min_ram_gb": 8,
+      "context": 8192
+    },
+    "3": {
+      "display": "Tokoro 3",
+      "car": "Mitsubishi 3000GT",
+      "base": "llama3.2:3b",
+      "download_gb": 2.0,
+      "min_ram_gb": 12,
+      "context": 8192
+    },
+    "4.8": {
+      "display": "Tokoro 4.8",
+      "car": "Lexus LFA",
+      "base": "qwen2.5:7b",
+      "download_gb": 4.7,
+      "min_ram_gb": 16,
+      "context": 16384
+    },
+    "5": {
+      "display": "Tokoro 5",
+      "car": "Toyota Century",
+      "base": "qwen2.5:14b",
+      "download_gb": 9.0,
+      "min_ram_gb": 24,
+      "context": 16384
+    }
+  }
+}

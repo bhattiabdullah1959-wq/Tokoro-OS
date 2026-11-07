@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+# tokoro-mode — one image, two personalities: work and gaming.
+set -euo pipefail
+
+# shellcheck source=tokoro-lib.sh
+. "${TOKORO_EXEC:-/usr/libexec/tokoro}/tokoro-lib.sh"
+
+mode_file=$TOKORO_USER_CONFIG/mode
+prev_file=$TOKORO_USER_CONFIG/mode-prev.json
+
+usage() {
+  cat <<'EOF'
+Usage: tokoro mode [work|gaming|toggle|status|install-shortcut]
+
+  gaming   performance power profile, tearing allowed, effects trimmed,
+           smart-home "gaming" scene when available
+  work     back to the tier's own settings
+  toggle   switch between the two
+
+Bind it to a key with: tokoro mode install-shortcut   (Meta+Shift+G)
+EOF
+}
+
+current_mode() {
+  [[ -r "$mode_file" ]] && cat "$mode_file" || printf 'work'
+}
+
+write_mode() {
+  install -d -m 0755 "$TOKORO_USER_CONFIG"
+  printf '%s\n' "$1" >"$mode_file"
+  tokoro_user_state_write "$(tokoro_current_tier)" "$(tokoro_recommended_tier)" \
+    "$(tokoro_is_overridden && echo 1 || echo 0)" "$1"
+}
+
+save_previous() {
+  install -d -m 0755 "$TOKORO_USER_CONFIG"
+  local profile anim
+  profile=$(powerprofilesctl get 2>/dev/null || echo unknown)
+  anim=$(kreadconfig6 --file kwinrc --group Compositing --key AnimationSpeed 2>/dev/null || true)
+  printf '{"profile":"%s","animation":"%s"}\n' "$profile" "${anim:-}" >"$prev_file"
+}
+
+restore_previous() {
+  [[ -r "$prev_file" ]] || return 0
+  local profile
+  profile=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("profile",""))' "$prev_file" 2>/dev/null || true)
+  if [[ -n "$profile" && "$profile" != "unknown" ]] && tokoro_have powerprofilesctl; then
+    powerprofilesctl set "$profile" 2>/dev/null || true
+  fi
+  rm -f "$prev_file"
+}
+
+smarthome_scene() {
+  local scene=$1
+  [[ -x "$TOKORO_EXEC/tokoro-smarthome" ]] || return 0
+  "$TOKORO_EXEC/tokoro-smarthome" list >/dev/null 2>&1 || return 0
+  "$TOKORO_EXEC/tokoro-smarthome" scene "$scene" >/dev/null 2>&1 ||
+    tokoro_warn "smart-home scene '$scene' skipped (not configured or tier too low)"
+}
+
+set_gaming() {
+  local tier
+  tier=$(tokoro_current_tier)
+  tokoro_tier_load "$tier"
+  save_previous
+
+  if tokoro_have powerprofilesctl; then
+    powerprofilesctl set performance 2>/dev/null || tokoro_warn "could not set performance profile"
+  fi
+
+  # Gaming trims compositor cost regardless of tier, then the app decides.
+  tokoro_kwrite kwinrc Compositing AnimationSpeed 1 || true
+  tokoro_kwrite kwinrc Compositing AllowTearing true || true
+  tokoro_kwrite kwinrc Plugins blurEnabled false || true
+  tokoro_kwin_reconfigure || true
+
+  # Acer laptops follow the tier's turbo mode.
+  if "$TOKORO_EXEC/tokoro-acer" detect >/dev/null 2>&1; then
+    "$TOKORO_EXEC/tokoro-acer" mode --quiet "${TIER_ACER_MODE:-performance}" || true
+  fi
+
+  smarthome_scene gaming
+  write_mode gaming
+  tokoro_have notify-send && notify-send --appname "Tokoro OS" --icon "applications-games" \
+    "Gaming mode" "Performance profile, tearing allowed, effects trimmed" || true
+  printf 'gaming\n'
+}
+
+set_work() {
+  local tier
+  tier=$(tokoro_current_tier)
+  tokoro_tier_load "$tier"
+  if tokoro_have powerprofilesctl; then
+    powerprofilesctl set "${TIER_POWER}" 2>/dev/null || true
+  fi
+  tokoro_kwrite kwinrc Compositing AnimationSpeed "${TIER_ANIM}" || true
+  tokoro_kwrite kwinrc Compositing AllowTearing \
+    "$([[ "${TIER_ALLOW_TEARING:-0}" == "1" ]] && echo true || echo false)" || true
+  tokoro_kwrite kwinrc Plugins blurEnabled \
+    "$([[ "${TIER_BLUR}" == "1" ]] && echo true || echo false)" || true
+  tokoro_kwin_reconfigure || true
+  restore_previous
+  smarthome_scene work
+  write_mode work
+  tokoro_have notify-send && notify-send --appname "Tokoro OS" --icon "applications-office" \
+    "Work mode" "Tier $(tokoro_tier_label "$tier") settings restored" || true
+  printf 'work\n'
+}
+
+install_shortcut() {
+  local file="${XDG_CONFIG_HOME:-$HOME/.config}/kglobalshortcutsrc"
+  install -d -m 0755 "$(dirname "$file")"
+  touch "$file"
+  if grep -q '^\[services\]\[tokoro-mode.desktop\]' "$file"; then
+    tokoro_info "shortcut already present in $file"
+    return 0
+  fi
+  {
+    printf '\n[services][tokoro-mode.desktop]\n'
+    printf '_launch=Meta+Shift+G,none,Work/Gaming toggle\n'
+  } >>"$file"
+  tokoro_info "added Meta+Shift+G to $file (log out and back in to activate)"
+}
+
+main() {
+  local cmd=${1:-status}
+  case "$cmd" in
+    work) set_work ;;
+    gaming) set_gaming ;;
+    toggle)
+      if [[ "$(current_mode)" == "gaming" ]]; then set_work; else set_gaming; fi
+      ;;
+    status)
+      printf 'mode: %s (tier: %s)\n' "$(current_mode)" "$(tokoro_current_tier)"
+      ;;
+    install-shortcut) install_shortcut ;;
+    -h | --help | help) usage ;;
+    *) usage; exit 2 ;;
+  esac
+}
+
+main "$@"

@@ -1,0 +1,94 @@
+{
+  "schema": 1,
+  "slots": {
+    "browser": {
+      "label": "Browser",
+      "default": "zen",
+      "options": [
+        {
+          "id": "zen",
+          "name": "Zen Browser",
+          "kind": "flatpak",
+          "flatpak": "app.zen_browser.zen"
+        },
+        {
+          "id": "chrome",
+          "name": "Google Chrome",
+          "kind": "flatpak",
+          "flatpak": "com.google.Chrome"
+        },
+        {
+          "id": "brave",
+          "name": "Brave",
+          "kind": "flatpak",
+          "flatpak": "com.brave.Browser"
+        },
+        {
+          "id": "firefox",
+          "name": "Firefox",
+          "kind": "flatpak",
+          "flatpak": "org.mozilla.firefox"
+        }
+      ]
+    },
+    "chat": {
+      "label": "Chat",
+      "default": "vencord",
+      "options": [
+        {
+          "id": "vencord",
+          "name": "Vencord (Vesktop)",
+          "kind": "flatpak",
+          "flatpak": "dev.vencord.Vesktop",
+          "note": "Discord with Vencord built in; screenshares with audio on Wayland"
+        },
+        {
+          "id": "discord",
+          "name": "Discord (official)",
+          "kind": "flatpak",
+          "flatpak": "com.discordapp.Discord"
+        }
+      ]
+    },
+    "launcher": {
+      "label": "Minecraft launcher",
+      "default": "sklauncher",
+      "options": [
+        {
+          "id": "sklauncher",
+          "name": "SKLauncher",
+          "kind": "manual",
+          "homepage": "https://sklauncher.net",
+          "note": "No Flathub package; the wizard opens the official download page"
+        },
+        {
+          "id": "prism",
+          "name": "Prism Launcher",
+          "kind": "flatpak",
+          "flatpak": "org.prismlauncher.PrismLauncher"
+        }
+      ]
+    },
+    "world_tools": {
+      "label": "World tools",
+      "default": "mca-selector",
+      "options": [
+        {
+          "id": "mca-selector",
+          "name": "MCA Selector",
+          "kind": "github_jar",
+          "repo": "Querz/mcaselector",
+          "asset_suffix": ".jar",
+          "homepage": "https://github.com/Querz/mcaselector",
+          "note": "Downloaded from GitHub and launched with the system Java runtime"
+        },
+        {
+          "id": "amulet",
+          "name": "Amulet Editor",
+          "kind": "manual",
+          "homepage": "https://www.amuletmc.com"
+        }
+      ]
+    }
+  }
+}

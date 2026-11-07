@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""tokoro-smarthome — optional KIRA Bluetooth smart-home control.
+
+Only available on the Quality and Ultra Quality tiers, and only after KIRA
+devices are configured in ~/.config/tokoro/kira.json.
+
+Devices are controlled over BLE GATT through bluetoothctl. Because every vendor
+uses different UUIDs, the config carries the on/off characteristic handles;
+`tokoro smarthome list` shows what is configured and `--dry-run` prints the
+exact bluetoothctl session that would run.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+TIERS = ["ultra-performance", "performance", "balanced", "quality", "ultra-quality"]
+EXEC = os.environ.get("TOKORO_EXEC", "/usr/libexec/tokoro")
+CONFIG = os.path.join(
+    os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
+    "tokoro", "kira.json")
+
+
+def tier_allowed() -> tuple[bool, str]:
+    tier_file = os.environ.get("TOKORO_STATE_FILE", "/etc/tokoro/tier.conf")
+    tier = "balanced"
+    try:
+        with open(tier_file, encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("TOKORO_TIER="):
+                    tier = line.split("=", 1)[1].strip().strip('"\'')
+    except OSError:
+        pass
+    return TIERS.index(tier) >= TIERS.index("quality"), tier
+
+
+def load_config() -> dict:
+    try:
+        with open(CONFIG, encoding="utf-8") as fh:
+            return json.load(fh)
+    except FileNotFoundError:
+        return {"schema": 1, "devices": {}, "scenes": {}}
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"kira.json is not valid JSON: {exc}")
+
+
+def gatt_script(device: dict, action: str, dry: bool) -> list[str]:
+    address = device["address"]
+    char = device.get("on_char" if action == "on" else "off_char", "")
+    value = device.get("on_value" if action == "on" else "off_value", "01")
+    lines = [
+        f"connect {address}",
+        "menu gatt",
+    ]
+    if char:
+        lines += [f"select-attribute {char}", f"write '{value}'"]
+    lines += ["back", f"disconnect {address}", "quit"]
+    return lines
+
+
+def run_script(lines: list[str], dry: bool) -> int:
+    if dry:
+        print("bluetoothctl <<EOF")
+        for line in lines:
+            print(f"  {line}")
+        print("EOF")
+        return 0
+    if not shutil.which("bluetoothctl"):
+        print("bluetoothctl not found; is BlueZ installed?", file=sys.stderr)
+        return 1
+    combined = "\n".join(lines) + "\nquit\n"
+    result = subprocess.run(
+        ["bluetoothctl"], input=combined, capture_output=True, text=True, timeout=60)
+    if result.returncode != 0:
+        print(result.stderr.strip() or "bluetoothctl failed", file=sys.stderr)
+    return result.returncode
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    allowed, tier = tier_allowed()
+    config = load_config()
+    print(f"KIRA smart home — tier {tier} ({'available' if allowed else 'not available on this tier'})")
+    print(f"config: {CONFIG}")
+    if not config.get("devices"):
+        print("no devices configured; copy /usr/share/tokoro/kira/kira.example.json")
+        return 0
+    for name, device in config["devices"].items():
+        print(f"  {name:<16} {device.get('address', '?'):<20} {device.get('profile', 'generic')}")
+    for scene in config.get("scenes", {}):
+        print(f"  scene: {scene}")
+    return 0
+
+
+def require_allowed() -> None:
+    allowed, tier = tier_allowed()
+    if not allowed:
+        raise SystemExit(
+            f"smart home needs the Quality or Ultra Quality tier (current: {tier})")
+
+
+def cmd_device(args: argparse.Namespace) -> int:
+    require_allowed()
+    config = load_config()
+    device = config.get("devices", {}).get(args.name)
+    if not device:
+        raise SystemExit(f"unknown device: {args.name}")
+    return run_script(gatt_script(device, args.action, args.dry_run), args.dry_run)
+
+
+def cmd_scene(args: argparse.Namespace) -> int:
+    require_allowed()
+    config = load_config()
+    scene = config.get("scenes", {}).get(args.name)
+    if not scene:
+        raise SystemExit(f"unknown scene: {args.name} (have: {', '.join(config.get('scenes', {})) or 'none'})")
+    status = 0
+    for entry in scene:
+        device_name, _, action = entry.partition(":")
+        device = config.get("devices", {}).get(device_name)
+        if not device:
+            print(f"skip unknown device {device_name}", file=sys.stderr)
+            status = 1
+            continue
+        print(f"{device_name} -> {action}")
+        status |= run_script(gatt_script(device, action or "on", args.dry_run), args.dry_run)
+    return status
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="KIRA Bluetooth smart home control")
+    parser.add_argument("--dry-run", action="store_true", help="print commands only")
+    sub = parser.add_subparsers(dest="cmd")
+    # Subcommands accept --dry-run after the verb as well as before it.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--dry-run", action="store_true", help=argparse.SUPPRESS)
+    sub.add_parser("list", parents=[common])
+    for action in ("on", "off", "toggle"):
+        p = sub.add_parser(action, parents=[common])
+        p.add_argument("name")
+    p = sub.add_parser("scene", parents=[common])
+    p.add_argument("name")
+    args = parser.parse_args()
+    args.dry_run = bool(getattr(args, "dry_run", False))
+
+    if args.cmd in (None, "list"):
+        return cmd_list(args)
+    if args.cmd == "toggle":
+        # Toggle needs the current device state, which raw GATT writes cannot read
+        # reliably across vendors. Scenes cover the real use case.
+        raise SystemExit("toggle is not supported for raw GATT devices; use on/off or a scene")
+    if args.cmd in ("on", "off"):
+        args.action = args.cmd
+        return cmd_device(args)
+    if args.cmd == "scene":
+        return cmd_scene(args)
+    parser.print_help()
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

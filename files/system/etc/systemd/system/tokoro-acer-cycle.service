@@ -1,0 +1,10 @@
+[Unit]
+Description=Tokoro OS Acer mode key handler
+Documentation=https://github.com/bhattiabdullah1959-wq/Tokoro-OS
+# Started by udev when the remapped Nitro key (KEY_PROG1) is pressed.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/tokoro/tokoro-acer-cycle
+# Never wait for the key handler during shutdown.
+TimeoutStartSec=10

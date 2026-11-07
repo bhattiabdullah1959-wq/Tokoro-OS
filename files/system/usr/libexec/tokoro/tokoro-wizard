@@ -1,0 +1,321 @@
+#!/usr/bin/env python3
+"""Tokoro OS first-boot wizard.
+
+Detect hardware -> pick a tier -> toggle features -> pick apps -> apply.
+
+Two front ends: kdialog (used automatically in a Plasma session) and a plain
+CLI. Everything can be driven non-interactively with --answers for the test
+suite and for image builders.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+EXEC_DIR = os.environ.get("TOKORO_EXEC", "/usr/libexec/tokoro")
+SHARE = os.environ.get("TOKORO_SHARE", "/usr/share/tokoro")
+ETC = os.environ.get("TOKORO_ETC", "/etc/tokoro")
+TIERS = ["ultra-performance", "performance", "balanced", "quality", "ultra-quality"]
+
+
+def log(msg: str) -> None:
+    print(msg, flush=True)
+
+
+def run(cmd: list[str], check: bool = False) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, capture_output=True, text=True, check=check, timeout=600)
+
+
+def have(cmd: str) -> bool:
+    return shutil.which(cmd) is not None
+
+
+def detect_hardware() -> dict:
+    result = run([os.path.join(EXEC_DIR, "tokoro-detect-hardware"), "--json"])
+    if result.returncode != 0:
+        return {"recommended_tier": "balanced", "notes": ["hardware detection failed"]}
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {"recommended_tier": "balanced", "notes": ["hardware detection output invalid"]}
+
+
+def load_apps() -> dict:
+    with open(os.path.join(SHARE, "wizard", "apps.json"), encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def tier_index(tier: str) -> int:
+    return TIERS.index(tier) if tier in TIERS else -1
+
+
+# --- front ends ---------------------------------------------------------------
+class Gui:
+    """kdialog front end. Falls back to asking nothing: returns None on cancel."""
+
+    def __init__(self) -> None:
+        self.ok = have("kdialog")
+
+    def _ask(self, args: list[str]) -> str | None:
+        result = run(["kdialog", *args])
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip()
+
+    def message(self, text: str) -> None:
+        if self.ok:
+            self._ask(["--title", "Tokoro OS setup", "--msgbox", text])
+        else:
+            log(text)
+
+    def choose(self, title: str, options: list[tuple[str, str]], default: str) -> str | None:
+        if not self.ok:
+            return None
+        args = ["--title", title, "--radiolist", title]
+        for key, label in options:
+            args += [key, label, "on" if key == default else "off"]
+        return self._ask(args)
+
+    def check(self, title: str, options: list[tuple[str, str, bool]]) -> list[str] | None:
+        if not self.ok:
+            return None
+        args = ["--title", title, "--separate-output", "--checklist", title]
+        for key, label, checked in options:
+            args += [key, label, "on" if checked else "off"]
+        out = self._ask(args)
+        return None if out is None else out.splitlines()
+
+    def text_input(self, title: str, default: str = "") -> str | None:
+        if not self.ok:
+            return None
+        return self._ask(["--title", title, "--inputbox", title, default])
+
+
+class Cli:
+    """Plain terminal front end, also used when kdialog is missing."""
+
+    def message(self, text: str) -> None:
+        log("")
+        log(text)
+        log("")
+
+    def choose(self, title: str, options: list[tuple[str, str]], default: str) -> str | None:
+        log(f"\n{title}")
+        for i, (key, label) in enumerate(options, start=1):
+            marker = " (recommended)" if key == default else ""
+            log(f"  {i}) {label}{marker}")
+        while True:
+            raw = input(f"Choice [{options[[k for k, _ in options].index(default)][0]}]: ").strip()
+            if not raw:
+                return default
+            if raw.isdigit() and 1 <= int(raw) <= len(options):
+                return options[int(raw) - 1][0]
+            if any(raw == key for key, _ in options):
+                return raw
+            log("  invalid choice")
+
+    def check(self, title: str, options: list[tuple[str, str, bool]]) -> list[str]:
+        log(f"\n{title}")
+        for key, label, checked in options:
+            log(f"  {key}: {label} [{'on' if checked else 'off'}]")
+        raw = input("Enter keys to ENABLE, comma separated (blank = defaults): ").strip()
+        if not raw:
+            return [key for key, _, checked in options if checked]
+        wanted = {part.strip() for part in raw.split(",")}
+        return [key for key, _, _ in options if key in wanted]
+
+    def text_input(self, title: str, default: str = "") -> str | None:
+        return input(f"{title} [{default}]: ").strip() or default
+
+
+# --- wizard steps ------------------------------------------------------------
+def collect(args: argparse.Namespace, ui, hw: dict, apps: dict) -> dict:
+    """Build the install plan. Reads --answers when given, else prompts."""
+    answers = {}
+    if args.answers:
+        with open(args.answers, encoding="utf-8") as fh:
+            answers = json.load(fh)
+
+    recommended = hw.get("recommended_tier", "balanced")
+    score = hw.get("score", 0)
+    tier = answers.get("tier")
+    if not tier:
+        ui.message(
+            "Tokoro OS detected this machine at {score}/100, which points at the "
+            "{rec} tier.\n\nGPU: {gpu}  CPU: {cpu}  RAM: {ram} GB\n"
+            "You can pick any tier; going above the recommendation only shows a "
+            "passive warning icon.".format(
+                score=score,
+                rec=recommended,
+                gpu=hw.get("breakdown", {}).get("gpu", "?"),
+                cpu=hw.get("breakdown", {}).get("cpu", "?"),
+                ram=hw.get("ram_gb", "?"),
+            )
+        )
+        options = [(t, t.replace("-", " ").title()) for t in TIERS]
+        tier = ui.choose("Performance tier", options, recommended) or recommended
+    if tier not in TIERS:
+        raise SystemExit(f"unknown tier in answers: {tier}")
+
+    tier_pos = tier_index(tier)
+    smart_home_available = tier_pos >= tier_index("quality")
+
+    features = {
+        "ai": answers.get("ai", True),
+        "smart_home": answers.get("smart_home", False) and smart_home_available,
+        "acer_battery_limit": answers.get("acer_battery_limit", False),
+        "gaming_mode": answers.get("gaming_mode", True),
+        "work_gaming_keybind": answers.get("work_gaming_keybind", True),
+    }
+    if not args.answers:
+        checkboxes = [
+            ("ai", "Local AI (on-device, model follows your tier)", features["ai"]),
+            ("gaming_mode", "Gaming mode + benchmark", features["gaming_mode"]),
+            ("work_gaming_keybind", "Work/Gaming toggle keybind", features["work_gaming_keybind"]),
+        ]
+        if smart_home_available:
+            checkboxes.append(("smart_home", "Bluetooth smart home (KIRA)", False))
+        chosen = ui.check("Features", checkboxes)
+        if chosen is not None:
+            features["ai"] = "ai" in chosen
+            features["gaming_mode"] = "gaming_mode" in chosen
+            features["work_gaming_keybind"] = "work_gaming_keybind" in chosen
+            features["smart_home"] = "smart_home" in chosen
+        if hw.get("acer", {}).get("is_nitro"):
+            picked = ui.check(
+                "Acer Nitro V",
+                [("acer_battery_limit", "Limit battery charging to 80% (needs Secure Boot off)", True)],
+            )
+            features["acer_battery_limit"] = bool(picked) and "acer_battery_limit" in picked
+
+    chosen_apps: dict[str, str] = {}
+    for slot, spec in apps["slots"].items():
+        default = spec["default"]
+        picked = answers.get("apps", {}).get(slot)
+        # With --answers, unspecified slots take their default instead of prompting.
+        if not picked and not args.answers:
+            options = [(opt["id"], opt["name"]) for opt in spec["options"]]
+            picked = ui.choose(spec["label"], options, default) or default
+        if not picked:
+            picked = default
+        if not any(opt["id"] == picked for opt in spec["options"]):
+            picked = default
+        chosen_apps[slot] = picked
+
+    ai_model = "auto"
+    if features["ai"]:
+        ai_model = answers.get("ai_model", "auto")
+
+    return {
+        "schema": 1,
+        "tier": tier,
+        "recommended_tier": recommended,
+        "hardware": {
+            "score": score,
+            "ram_gb": hw.get("ram_gb"),
+            "gpus": hw.get("gpus", []),
+            "cpu": hw.get("cpu", {}),
+            "acer": hw.get("acer", {}),
+            "is_laptop": hw.get("is_laptop", False),
+        },
+        "features": features,
+        "ai_model": ai_model,
+        "apps": chosen_apps,
+    }
+
+
+def print_summary(plan: dict) -> None:
+    feat = plan["features"]
+    on = [name for name, value in feat.items() if value]
+    log("")
+    log("Ready to apply")
+    log(f"  tier          : {plan['tier']} (recommended {plan['recommended_tier']})")
+    log(f"  features      : {', '.join(on) if on else 'none'}")
+    log(f"  AI model      : Tokoro {plan['ai_model']}" if feat["ai"] else "  AI            : off")
+    log(f"  apps          : {json.dumps(plan['apps'])}")
+    if plan["hardware"].get("acer", {}).get("is_nitro"):
+        log("  Acer          : Nitro V detected, battery limiter "
+            f"{'requested' if feat['acer_battery_limit'] else 'left alone'}")
+    log("")
+
+
+def apply_plan(plan: dict, args: argparse.Namespace) -> int:
+    """Write the plan and hand system changes to the privileged helper."""
+    if args.dry_run:
+        print(json.dumps(plan, indent=2))
+        return 0
+
+    plan_path = os.path.join(args.state_dir, "firstboot-plan.json")
+    os.makedirs(args.state_dir, exist_ok=True)
+    with open(plan_path, "w", encoding="utf-8") as fh:
+        json.dump(plan, fh, indent=2)
+        fh.write("\n")
+
+    helper = os.path.join(EXEC_DIR, "tokoro-apply-plan")
+    cmd = [helper, plan_path]
+    if os.geteuid() != 0:
+        if not have("pkexec"):
+            log("error: pkexec is required to apply the plan as root")
+            return 1
+        cmd = ["pkexec", *cmd]
+    result = run(cmd)
+    if result.returncode != 0:
+        log("error: applying the plan failed")
+        log(result.stdout.strip())
+        log(result.stderr.strip())
+        return result.returncode
+
+    log(result.stdout.strip())
+
+    # Desktop half: KDE settings and app installs must run as the user.
+    user_helper = os.path.join(EXEC_DIR, "tokoro-apply-user")
+    if os.access(user_helper, os.X_OK) and os.geteuid() != 0:
+        user_result = run([user_helper, plan_path])
+        log(user_result.stdout.strip())
+        if user_result.returncode != 0:
+            log("warning: desktop settings or app installs did not fully apply")
+            log(user_result.stderr.strip())
+    log("")
+    log("Setup complete. `tokoro tier show` and `tokoro doctor` check the result.")
+    log("You can re-run this wizard any time with `tokoro wizard`.")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Tokoro OS first-boot wizard")
+    parser.add_argument("--dry-run", action="store_true", help="print the plan, change nothing")
+    parser.add_argument("--cli", action="store_true", help="force the terminal front end")
+    parser.add_argument("--gui", action="store_true", help="force the kdialog front end")
+    parser.add_argument("--answers", help="JSON file with pre-set answers (non-interactive)")
+    parser.add_argument("--state-dir", default=os.path.join(
+        os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")), "tokoro"))
+    parser.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    args = parser.parse_args()
+
+    if args.gui:
+        ui: Gui | Cli = Gui()
+    elif args.cli or args.answers or not os.environ.get("DISPLAY"):
+        ui = Cli()
+    else:
+        ui = Gui()
+
+    hw = detect_hardware()
+    apps = load_apps()
+    plan = collect(args, ui, hw, apps)
+    print_summary(plan)
+
+    if args.dry_run or args.answers or args.yes:
+        return apply_plan(plan, args)
+    if not isinstance(ui, Gui):
+        if input("Apply these settings? [Y/n]: ").strip().lower() in ("n", "no"):
+            log("cancelled")
+            return 1
+    return apply_plan(plan, args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

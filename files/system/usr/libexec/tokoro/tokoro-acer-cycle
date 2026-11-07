@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# tokoro-acer-cycle — one press of the Nitro / mode key = one mode step.
+#
+# Started by udev through tokoro-acer-cycle.service. A lock file debounces key
+# repeat and guarantees only one cycle runs at a time.
+set -euo pipefail
+
+# shellcheck source=tokoro-lib.sh
+. "${TOKORO_EXEC:-/usr/libexec/tokoro}/tokoro-lib.sh"
+
+lock=/run/tokoro-acer-cycle.lock
+exec 9>"$lock"
+if ! flock -n 9; then
+  exit 0
+fi
+
+/usr/libexec/tokoro/tokoro-acer detect >/dev/null 2>&1 || exit 0
+/usr/libexec/tokoro/tokoro-acer next || true

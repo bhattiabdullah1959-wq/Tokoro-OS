@@ -1,0 +1,63 @@
+---
+# yaml-language-server: $schema=https://schema.blue-build.org/recipe-v1.json
+# Tokoro OS — NVIDIA variant.
+# Bazzite's -nvidia images already ship the akmods, kargs and driver stack, so the
+# module list is identical to the AMD/Intel recipe; only the base and tags differ.
+name: tokoro-os-nvidia
+description: Tokoro OS — JDM-themed, adaptive gaming distro (NVIDIA)
+base-image: ghcr.io/ublue-os/bazzite-nvidia
+image-version: stable
+
+alt-tags:
+  - latest
+  - "1.2.08"
+  - "1.2"
+  - 1.2-supra-mk3
+
+labels:
+  org.tokoro.variant: nvidia
+  org.tokoro.tier-system: "five-tier"
+  org.opencontainers.image.title: Tokoro OS
+  org.opencontainers.image.version: "1.2.08"
+  org.opencontainers.image.description: Tokoro OS 1.2.08 (Supra Mk3) — NVIDIA
+
+modules:
+  - type: files
+    files:
+      - source: system
+        destination: /
+
+  - type: script
+    scripts:
+      - 00-preflight.sh
+      - 10-branding.sh
+      - 20-terminal-banner.sh
+      - 30-ai-runtime.sh
+      - 40-acer-support.sh
+      - 50-release-metadata.sh
+
+  - type: systemd
+    system:
+      enabled:
+        - tokoro-acer-battery.service
+    user:
+      enabled:
+        - tokoro-tier-watch.service
+
+  - type: os-release
+    properties:
+      NAME: Tokoro OS
+      PRETTY_NAME: Tokoro OS 1.2.08 (Supra Mk3)
+      VERSION_ID: "1.2.08"
+      VERSION: 1.2.08 (Supra Mk3)
+      VERSION_CODENAME: supra-mk3
+      VARIANT: Tokoro OS
+      VARIANT_ID: tokoro
+      DEFAULT_HOSTNAME: tokoro-os
+      LOGO: tokoro-logo
+      HOME_URL: https://github.com/bhattiabdullah1959-wq/Tokoro-OS
+      DOCUMENTATION_URL: https://github.com/bhattiabdullah1959-wq/Tokoro-OS/tree/main/docs
+      SUPPORT_URL: https://github.com/bhattiabdullah1959-wq/Tokoro-OS/issues
+      BUG_REPORT_URL: https://github.com/bhattiabdullah1959-wq/Tokoro-OS/issues
+
+  - type: signing

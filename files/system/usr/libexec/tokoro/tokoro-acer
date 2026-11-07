@@ -1,0 +1,262 @@
+#!/usr/bin/env bash
+# tokoro-acer — Acer Nitro V support (battery limiter, performance modes, mode key).
+#
+# Every command gates on `detect`, which fails on desktops and on non-Acer
+# laptops, so the feature simply does not exist there.
+set -euo pipefail
+
+# shellcheck source=tokoro-lib.sh
+. "${TOKORO_EXEC:-/usr/libexec/tokoro}/tokoro-lib.sh"
+
+DMI=${TOKORO_DMI_ROOT:-/sys/class/dmi/id}
+POWER_SUPPLY=${TOKORO_POWER_SUPPLY_ROOT:-/sys/class/power_supply}
+CONF=$TOKORO_ETC/acer.conf
+HEALTH_DRIVER=/sys/bus/platform/drivers/acer-wmi-battery
+HEALTH_MODE=$HEALTH_DRIVER/health_mode
+PLATFORM_PROFILE=/sys/firmware/acpi/platform_profile
+PLATFORM_CHOICES=/sys/firmware/acpi/platform_profile_choices
+
+usage() {
+  cat <<'EOF'
+Usage: tokoro acer <command>
+
+  detect                 exit 0 only on an Acer laptop (desktops: exit 1)
+  status                 hardware, battery limiter, mode, Secure Boot
+  battery limit on|off   cap charging at 80% (needs Secure Boot off)
+  modes                  the five modes and what the kernel exposes
+  mode [name]            show or set a performance mode
+  next                   cycle to the next mode (used by the mode key)
+  learn                  capture the Nitro key and install a udev remap
+EOF
+}
+
+read_dmi() {
+  local key=$1
+  [[ -r "$DMI/$key" ]] && head -n1 "$DMI/$key" || true
+}
+
+is_acer() {
+  local vendor product family
+  vendor=$(read_dmi sys_vendor)
+  product=$(read_dmi product_name)
+  family=$(read_dmi product_family)
+  case "${vendor,,}" in
+    *acer*) ;;
+    *) return 1 ;;
+  esac
+  # Battery present: laptops only. Desktops never see this feature.
+  compgen -G "$POWER_SUPPLY/BAT*" >/dev/null || return 1
+  printf '%s %s\n' "$product" "$family" >"$TOKORO_STATE/acer-model" 2>/dev/null || true
+  return 0
+}
+
+is_nitro() {
+  local model
+  model="$(read_dmi product_name) $(read_dmi product_family)"
+  [[ "${model,,}" == *nitro* || "${model,,}" == *predator* ]]
+}
+
+cmd_detect() {
+  is_acer
+}
+
+cmd_status() {
+  if ! is_acer; then
+    printf 'not an Acer laptop: battery limiting and Acer performance modes are unavailable\n'
+    return 1
+  fi
+  local vendor product limit="unknown" secure="unknown" mode profile choices
+  vendor=$(read_dmi sys_vendor)
+  product=$(read_dmi product_name)
+  mode=$(acer_mode_current)
+  profile=$(cat "$PLATFORM_PROFILE" 2>/dev/null || echo "unavailable")
+  choices=$(cat "$PLATFORM_CHOICES" 2>/dev/null || echo "unavailable")
+
+  if [[ -r "$HEALTH_MODE" ]]; then
+    limit=$(cat "$HEALTH_MODE")
+    [[ "$limit" == "1" ]] && limit="on (80%)" || limit="off"
+  elif compgen -G "/sys/class/power_supply/BAT*/charge_control_end_threshold" >/dev/null; then
+    local f
+    for f in /sys/class/power_supply/BAT*/charge_control_end_threshold; do
+      limit="$(cat "$f")%"
+    done
+  else
+    limit="unsupported by this kernel"
+  fi
+
+  if [[ -r /sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c ]]; then
+    # 5-byte EFI variable: attributes (4 bytes) + value (1 byte).
+    secure=$(od -An -t u1 -j4 -N1 \
+      /sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c 2>/dev/null |
+      tr -d ' \n')
+    [[ "$secure" == "1" ]] && secure="enabled" || secure="disabled"
+  elif tokoro_have mokutil; then
+    secure=$(mokutil --sb-state 2>/dev/null | tr '\n' ' ')
+  fi
+
+  printf 'Acer laptop : %s (%s)\n' "$product" "$vendor"
+  printf 'Nitro/Predator: %s\n' "$(is_nitro && echo yes || echo no)"
+  printf 'battery limit: %s\n' "$limit"
+  printf 'mode         : %s\n' "$mode"
+  printf 'platform     : %s (choices: %s)\n' "$profile" "$choices"
+  printf 'secure boot  : %s\n' "$secure"
+  if [[ "$secure" == "enabled" ]]; then
+    printf 'note         : the battery limiter needs Secure Boot off; change it in the BIOS\n'
+  fi
+}
+
+cmd_battery() {
+  local action=${1:-} value
+  [[ "$action" == "on" || "$action" == "off" ]] || tokoro_die "usage: tokoro acer battery limit on|off"
+  tokoro_require_root
+  is_acer || tokoro_die "not an Acer laptop"
+  if [[ "$action" == "on" ]]; then value=1; else value=0; fi
+
+  if [[ -w "$HEALTH_MODE" ]]; then
+    printf '%s' "$value" >"$HEALTH_MODE"
+    tokoro_info "battery health mode: $([[ $value == 1 ]] && echo '80% limit on' || echo off)"
+  elif compgen -G "/sys/class/power_supply/BAT*/charge_control_end_threshold" >/dev/null; then
+    local f
+    for f in /sys/class/power_supply/BAT*/charge_control_end_threshold; do
+      if [[ "$action" == "on" ]]; then printf '80' >"$f"; else printf '100' >"$f"; fi
+    done
+    tokoro_info "charge_control_end_threshold set"
+  else
+    tokoro_die "this kernel does not expose an Acer battery limiter"
+  fi
+  install -d -m 0755 "$TOKORO_ETC"
+  printf 'ACER_BATTERY_LIMIT=%s\n' "$([[ $value == 1 ]] && echo 1 || echo 0)" >"$CONF"
+}
+
+acer_modes() { printf 'quiet balanced performance turbo nitro\n'; }
+
+mode_target() { # logical mode -> platform_profile value
+  local choices=$1 mode=$2
+  case "$mode" in
+    quiet) for v in quiet low-power; do [[ " $choices " == *" $v "* ]] && { echo "$v"; return; }; done ;;
+    balanced) [[ " $choices " == *" balanced "* ]] && { echo balanced; return; } ;;
+    performance | turbo | nitro)
+      for v in performance balanced-performance; do
+        [[ " $choices " == *" $v "* ]] && { echo "$v"; return; }
+      done ;;
+  esac
+  echo "balanced"
+}
+
+acer_mode_current() {
+  if [[ -r "$CONF" ]]; then
+    # shellcheck disable=SC1090
+    . "$CONF"
+    [[ -n "${ACER_MODE:-}" ]] && { printf '%s' "$ACER_MODE"; return; }
+  fi
+  printf 'balanced'
+}
+
+cmd_modes() {
+  local choices mode target current
+  choices=$(cat "$PLATFORM_CHOICES" 2>/dev/null || echo "")
+  current=$(acer_mode_current)
+  printf '%-12s %-18s %s\n' "mode" "platform_profile" "active"
+  for mode in $(acer_modes); do
+    target=$(mode_target "$choices" "$mode")
+    printf '%-12s %-18s %s\n' "$mode" "$target" "$([[ $mode == "$current" ]] && echo '<-')"
+  done
+  if [[ -z "$choices" ]]; then
+    printf '\nNo platform_profile support; modes fall back to power-profiles-daemon.\n'
+  fi
+}
+
+set_mode() {
+  local mode=$1 choices target
+  choices=$(cat "$PLATFORM_CHOICES" 2>/dev/null || echo "")
+  target=$(mode_target "$choices" "$mode")
+  if [[ -w "$PLATFORM_PROFILE" ]]; then
+    printf '%s' "$target" >"$PLATFORM_PROFILE" 2>/dev/null || true
+  fi
+  if tokoro_have powerprofilesctl; then
+    case "$mode" in
+      quiet) powerprofilesctl set power-saver 2>/dev/null || true ;;
+      balanced) powerprofilesctl set balanced 2>/dev/null || true ;;
+      *) powerprofilesctl set performance 2>/dev/null || true ;;
+    esac
+  fi
+  install -d -m 0755 "$TOKORO_ETC"
+  [[ -f "$CONF" ]] || : >"$CONF"
+  # Keep the battery setting if present, replace the mode line.
+  local tmp
+  tmp=$(mktemp)
+  grep -v '^ACER_MODE=' "$CONF" >"$tmp" 2>/dev/null || true
+  printf 'ACER_MODE=%s\n' "$mode" >>"$tmp"
+  install -m 0644 "$tmp" "$CONF"
+  rm -f "$tmp"
+}
+
+cmd_mode() {
+  local quiet=0 mode=${1:-}
+  [[ "$mode" == "--quiet" ]] && { quiet=1; mode=${2:-}; }
+  is_acer || tokoro_die "not an Acer laptop"
+  if [[ -z "$mode" ]]; then
+    acer_mode_current
+    return 0
+  fi
+  case " $(acer_modes) " in
+    *" $mode "*) ;;
+    *) tokoro_die "unknown mode: $mode (have: $(acer_modes))" ;;
+  esac
+  # Writing platform_profile needs root; the udev-triggered service already is.
+  if [[ ! -w "$PLATFORM_PROFILE" ]] && ! tokoro_is_root; then
+    tokoro_as_root "$TOKORO_EXEC/tokoro-acer" mode "$mode"
+    return
+  fi
+  set_mode "$mode"
+  [[ "$quiet" -eq 1 ]] && return 0
+  tokoro_info "Acer mode: $mode"
+  if tokoro_have notify-send; then
+    notify-send --appname "Tokoro OS" --icon "computer" "Acer mode" "$mode" || true
+  fi
+}
+
+cmd_next() {
+  local current modes next=""
+  is_acer || tokoro_die "not an Acer laptop"
+  current=$(acer_mode_current)
+  modes=$(acer_modes)
+  # shellcheck disable=SC2086
+  set -- $modes
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "$current" ]]; then
+      next=${2:-$1}
+      break
+    fi
+    shift
+  done
+  cmd_mode "$next"
+}
+
+cmd_learn() {
+  tokoro_require_root
+  is_acer || tokoro_die "not an Acer laptop"
+  tokoro_have python3 || tokoro_die "python3 missing"
+  "$TOKORO_EXEC/tokoro-acer-learn"
+}
+
+main() {
+  local cmd=${1:-status}
+  shift || true
+  case "$cmd" in
+    detect) cmd_detect ;;
+    status) cmd_status ;;
+    battery)
+      [[ "${1:-}" == "limit" ]] && shift
+      cmd_battery "${1:-}"
+      ;;
+    modes) cmd_modes ;;
+    mode) cmd_mode "$@" ;;
+    next) cmd_next ;;
+    learn) cmd_learn ;;
+    -h | --help | help) usage ;;
+    *) usage; exit 2 ;;
+  esac
+}
+
+main "$@"

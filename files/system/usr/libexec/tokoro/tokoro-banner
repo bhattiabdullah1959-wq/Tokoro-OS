@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Tokoro OS terminal banner. Static art + live tier/mode/version line.
+set -euo pipefail
+
+# shellcheck source=tokoro-lib.sh
+. "${TOKORO_EXEC:-/usr/libexec/tokoro}/tokoro-lib.sh"
+
+release_json="${TOKORO_SHARE}/release.json"
+version=$(tokoro_version)
+codename=$(tokoro_release_get codename 2>/dev/null || echo "")
+
+tier=$(tokoro_current_tier)
+tier_label=$(tokoro_tier_label "$tier")
+car=$(tokoro_release_get "tiers.$tier.car" 2>/dev/null || echo "")
+mode=$(cat "${TOKORO_USER_CONFIG}/mode" 2>/dev/null || echo "work")
+warning=""
+if tokoro_is_above_recommendation; then
+  warning="  [!] above hardware recommendation"
+fi
+
+# Optional ANSI colour, disabled for /etc/motd and non-tty output.
+esc=""
+if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+  esc=$'\033'
+fi
+
+if [[ -n "$esc" ]]; then
+  c1="${esc}[38;5;196m"; c2="${esc}[38;5;245m"; c0="${esc}[0m"
+else
+  c1=""; c2=""; c0=""
+fi
+
+cat <<BANNER
+${c1}  T O K O R O   O S${c0}  ${c2}${version} · ${codename}${c0}
+${c2}  ------------------------------------------------------------${c0}
+${c2}  tier${c0}  ${tier_label}  ${c2}(${tier})${c0}
+${c2}  car ${c0}  ${car}
+${c2}  mode${c0}  ${mode}${warning}
+${c2}  ------------------------------------------------------------${c0}
+${c2}  tokoro help · tokoro tier show · tokoro mode toggle${c0}
+BANNER

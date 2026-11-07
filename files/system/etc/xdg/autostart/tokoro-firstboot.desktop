@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Tokoro Setup
+Comment=One-time Tokoro OS setup
+Exec=/usr/libexec/tokoro/tokoro-firstboot
+Icon=preferences-system-performance
+Terminal=false
+X-GNOME-Autostart-enabled=true
+OnlyShowIn=KDE;

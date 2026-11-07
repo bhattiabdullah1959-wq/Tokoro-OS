@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+"""Tokoro OS hardware detection and tier recommendation.
+
+Reads sysfs (under --root, so the test suite can use fixtures) plus DMI and
+scores the machine 0-100. The score maps onto the five Tokoro tiers.
+
+Exit codes: 0 ok, 3 no data found.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+
+TIERS = [
+    "ultra-performance",
+    "performance",
+    "balanced",
+    "quality",
+    "ultra-quality",
+]
+
+VENDORS = {
+    "0x10de": "NVIDIA",
+    "0x1002": "AMD",
+    "0x8086": "Intel",
+    "0x13b5": "ARM",
+    "0x1af4": "Red Hat (virtual)",
+}
+
+
+def read(path: str, default: str = "") -> str:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read().strip()
+    except OSError:
+        return default
+
+
+def read_int(path: str, default: int = 0) -> int:
+    raw = read(path)
+    digits = re.sub(r"[^0-9]", "", raw)
+    return int(digits) if digits else default
+
+
+def meminfo_kb(root: str, key: str) -> int:
+    for line in read(os.path.join(root, "proc/meminfo")).splitlines():
+        if line.startswith(key + ":"):
+            parts = line.split()
+            if len(parts) >= 2:
+                try:
+                    return int(parts[1])
+                except ValueError:
+                    return 0
+    return 0
+
+
+def gpu_score(vram_gb: float, integrated: bool) -> int:
+    if integrated:
+        return 16
+    if vram_gb >= 20:
+        return 55
+    if vram_gb >= 15:
+        return 48
+    if vram_gb >= 11:
+        return 42
+    if vram_gb >= 7:
+        return 34
+    if vram_gb >= 5:
+        return 25
+    if vram_gb >= 3:
+        return 14
+    return 10
+
+
+def detect_gpus(root: str, notes: list[str]) -> list[dict]:
+    gpus: list[dict] = []
+    drm = os.path.join(root, "sys/class/drm")
+    if not os.path.isdir(drm):
+        return gpus
+    for entry in sorted(os.listdir(drm)):
+        if not re.fullmatch(r"card\d+", entry):
+            continue
+        dev = os.path.join(drm, entry, "device")
+        if not os.path.isdir(dev):
+            continue
+        vendor_id = read(os.path.join(dev, "vendor")).lower()
+        vendor = VENDORS.get(vendor_id, vendor_id or "unknown")
+        # VRAM: amdgpu exposes mem_info_vram_total; i915 exposes lmem_total_bytes.
+        vram = 0
+        for name in ("mem_info_vram_total", "lmem_total_bytes"):
+            vram = read_int(os.path.join(dev, name))
+            if vram:
+                break
+        integrated = vendor == "Intel" and vram == 0
+        vram_gb = round(vram / (1024**3), 1) if vram else 0.0
+        if vendor == "NVIDIA" and vram == 0 and root == "/":
+            smi = shutil_which("nvidia-smi")
+            if smi:
+                try:
+                    out = subprocess.run(
+                        [smi, "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+                        capture_output=True, text=True, timeout=10, check=False,
+                    ).stdout.strip().splitlines()
+                    if out:
+                        vram_gb = round(float(out[0].strip()) / 1024, 1)
+                except (ValueError, OSError, subprocess.SubprocessError):
+                    notes.append("nvidia-smi present but VRAM query failed")
+        gpus.append(
+            {
+                "card": entry,
+                "vendor": vendor,
+                "vendor_id": vendor_id,
+                "vram_gb": vram_gb,
+                "integrated": integrated,
+                "score": gpu_score(vram_gb, integrated),
+            }
+        )
+    return gpus
+
+
+def shutil_which(cmd: str) -> str | None:
+    for path in os.environ.get("PATH", "").split(os.pathsep):
+        candidate = os.path.join(path, cmd)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def cpu_info(root: str) -> dict:
+    cpuinfo = read(os.path.join(root, "proc/cpuinfo"))
+    model = ""
+    match = re.search(r"^model name\s*:\s*(.+)$", cpuinfo, re.MULTILINE)
+    if match:
+        model = match.group(1).strip()
+    threads = len(re.findall(r"^processor\s*:", cpuinfo, re.MULTILINE))
+    cores = threads
+    for line in cpuinfo.splitlines():
+        if line.lower().startswith("cpu cores"):
+            try:
+                cores = int(line.split(":")[1].strip())
+            except (IndexError, ValueError):
+                pass
+            break
+    return {"model": model, "cores": cores, "threads": threads}
+
+
+def score_cpu(cores: int) -> int:
+    if cores >= 16:
+        return 25
+    if cores >= 12:
+        return 20
+    if cores >= 8:
+        return 15
+    if cores >= 6:
+        return 10
+    return 4
+
+
+def score_ram(ram_gb: float) -> int:
+    if ram_gb >= 32:
+        return 20
+    if ram_gb >= 16:
+        return 14
+    if ram_gb >= 8:
+        return 8
+    return 2
+
+
+def tier_for_score(score: int) -> str:
+    if score >= 80:
+        return "ultra-quality"
+    if score >= 60:
+        return "quality"
+    if score >= 40:
+        return "balanced"
+    if score >= 20:
+        return "performance"
+    return "ultra-performance"
+
+
+def detect(root: str) -> dict:
+    notes: list[str] = []
+    dmi_root = os.path.join(root, "sys/class/dmi/id")
+    dmi = {
+        "sys_vendor": read(os.path.join(dmi_root, "sys_vendor")),
+        "product_name": read(os.path.join(dmi_root, "product_name")),
+        "product_family": read(os.path.join(dmi_root, "product_family")),
+        "board_vendor": read(os.path.join(dmi_root, "board_vendor")),
+        "bios_version": read(os.path.join(dmi_root, "bios_version")),
+    }
+
+    gpus = detect_gpus(root, notes)
+    cpu = cpu_info(root)
+    ram_gb = round(meminfo_kb(root, "MemTotal") / (1024**2), 1)
+
+    # Best GPU decides the tier; a machine never scores on a dead secondary card.
+    best_gpu = max((g["score"] for g in gpus), default=0)
+    if not gpus:
+        notes.append("no DRM devices found; GPU score assumed 8")
+        best_gpu = 8
+    if not ram_gb:
+        notes.append("MemTotal unreadable; RAM score assumed 8 GB")
+        ram_gb = 8.0
+
+    cpu_score = score_cpu(cpu["cores"])
+    ram_score = score_ram(ram_gb)
+    score = best_gpu + cpu_score + ram_score
+    tier = tier_for_score(score)
+
+    batteries = 0
+    ps = os.path.join(root, "sys/class/power_supply")
+    if os.path.isdir(ps):
+        for entry in os.listdir(ps):
+            if entry.startswith("BAT") and os.path.exists(os.path.join(ps, entry, "present")):
+                batteries += 1
+
+    is_acer = "acer" in (dmi["sys_vendor"] + dmi["board_vendor"]).lower()
+    is_acer_nitro = is_acer and bool(
+        re.search(r"nitro|predator", dmi["product_name"] + dmi["product_family"], re.I)
+    )
+
+    return {
+        "schema": 1,
+        "score": score,
+        "recommended_tier": tier,
+        "tier_label": tier,
+        "breakdown": {
+            "gpu": best_gpu,
+            "cpu": cpu_score,
+            "ram": ram_score,
+        },
+        "cpu": cpu,
+        "ram_gb": ram_gb,
+        "gpus": gpus,
+        "battery_count": batteries,
+        "is_laptop": batteries > 0,
+        "dmi": dmi,
+        "acer": {"is_acer": is_acer, "is_nitro": is_acer_nitro},
+        "notes": notes,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Detect Tokoro OS hardware tier")
+    parser.add_argument("--root", default=os.environ.get("TOKORO_ROOT", "/"),
+                        help="filesystem root to inspect (tests use a fixture)")
+    parser.add_argument("--tier", action="store_true", help="print only the tier id")
+    parser.add_argument("--json", action="store_true", help="print JSON (default)")
+    parser.add_argument("--explain", action="store_true", help="human readable output")
+    args = parser.parse_args()
+
+    data = detect(args.root)
+    if args.tier:
+        print(data["recommended_tier"])
+        return 0
+    if args.explain:
+        print(f"Tokoro hardware score: {data['score']}/100 -> {data['tier_label']}")
+        print(f"  GPU {data['breakdown']['gpu']}  CPU {data['breakdown']['cpu']}  RAM {data['breakdown']['ram']}")
+        for gpu in data["gpus"]:
+            print(f"  GPU: {gpu['vendor']} {gpu['vram_gb']} GB (score {gpu['score']})")
+        print(f"  CPU: {data['cpu']['model'] or 'unknown'} ({data['cpu']['cores']} cores)")
+        print(f"  RAM: {data['ram_gb']} GB")
+        for note in data["notes"]:
+            print(f"  note: {note}")
+        return 0
+    print(json.dumps(data, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

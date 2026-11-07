@@ -1,0 +1,18 @@
+{
+  "version": "1.2.08",
+  "series": "1.2",
+  "codename": "Supra Mk3",
+  "codename_slug": "supra-mk3",
+  "car": "Toyota Supra Mk3 (A70)",
+  "released": "2026-11-07",
+  "image_name": "tokoro-os",
+  "nvidia_image_name": "tokoro-os-nvidia",
+  "tag_prefix": "1.2-supra-mk3",
+  "tiers": {
+    "ultra-performance": { "car": "Honda Civic Type R (EK9)", "index": 1 },
+    "performance": { "car": "Nissan Skyline GT-R (R34)", "index": 2 },
+    "balanced": { "car": "Toyota AE86 Sprinter Trueno", "index": 3 },
+    "quality": { "car": "Mazda RX-7 (FD3S)", "index": 4 },
+    "ultra-quality": { "car": "Lexus LS400 (UCF10)", "index": 5 }
+  }
+}

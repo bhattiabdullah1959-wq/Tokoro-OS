@@ -1,17 +1,64 @@
 ---
 # yaml-language-server: $schema=https://schema.blue-build.org/recipe-v1.json
+# Tokoro OS — AMD / Intel variant.
+# Tags must match files/system/usr/share/tokoro/release.json (enforced by tests/test_release.py).
 name: tokoro-os
-description: Tokoro OS — JDM-themed, adaptive gaming distro
-
+description: Tokoro OS — JDM-themed, adaptive gaming distro (AMD / Intel)
 base-image: ghcr.io/ublue-os/bazzite
 image-version: stable
 
+alt-tags:
+  - latest
+  - "1.2.08"
+  - "1.2"
+  - 1.2-supra-mk3
+
+labels:
+  org.tokoro.variant: amd-intel
+  org.tokoro.tier-system: "five-tier"
+  org.opencontainers.image.title: Tokoro OS
+  org.opencontainers.image.version: "1.2.08"
+  org.opencontainers.image.description: Tokoro OS 1.2.08 (Supra Mk3) — AMD / Intel
+
 modules:
+  # Everything in files/system/ lands in the image root (/).
+  - type: files
+    files:
+      - source: system
+        destination: /
+
   - type: script
-    snippets:
-      - sed -i 's/^NAME=.*/NAME="Tokoro OS"/' /usr/lib/os-release
-      - sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="Tokoro OS"/' /usr/lib/os-release
-      - sed -i 's/^# Welcome to Bazzite.*/# Welcome to Tokoro OS/' /usr/share/ublue-os/motd/template.md
-      - sed -i '/bazzite\.gg/d' /usr/share/ublue-os/motd/template.md
+    scripts:
+      - 00-preflight.sh
+      - 10-branding.sh
+      - 20-terminal-banner.sh
+      - 30-ai-runtime.sh
+      - 40-acer-support.sh
+      - 50-release-metadata.sh
+
+  - type: systemd
+    system:
+      enabled:
+        # Self-gating: tolerates and exits on anything that is not an Acer laptop.
+        - tokoro-acer-battery.service
+    user:
+      enabled:
+        - tokoro-tier-watch.service
+
+  - type: os-release
+    properties:
+      NAME: Tokoro OS
+      PRETTY_NAME: Tokoro OS 1.2.08 (Supra Mk3)
+      VERSION_ID: "1.2.08"
+      VERSION: 1.2.08 (Supra Mk3)
+      VERSION_CODENAME: supra-mk3
+      VARIANT: Tokoro OS
+      VARIANT_ID: tokoro
+      DEFAULT_HOSTNAME: tokoro-os
+      LOGO: tokoro-logo
+      HOME_URL: https://github.com/bhattiabdullah1959-wq/Tokoro-OS
+      DOCUMENTATION_URL: https://github.com/bhattiabdullah1959-wq/Tokoro-OS/tree/main/docs
+      SUPPORT_URL: https://github.com/bhattiabdullah1959-wq/Tokoro-OS/issues
+      BUG_REPORT_URL: https://github.com/bhattiabdullah1959-wq/Tokoro-OS/issues
 
   - type: signing

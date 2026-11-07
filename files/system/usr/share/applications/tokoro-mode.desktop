@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Tokoro Work/Gaming Toggle
+Comment=Switch between work and gaming settings
+Exec=/usr/bin/tokoro mode toggle
+Icon=applications-games
+Terminal=false
+Categories=System;Game;
+Keywords=tokoro;mode;gaming;work;

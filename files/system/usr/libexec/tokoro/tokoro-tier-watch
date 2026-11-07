@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Refresh the per-user tier state (tier.json) the Plasma applet reads.
+# Passive by design: never shows a notification popup.
+set -euo pipefail
+
+# shellcheck source=tokoro-lib.sh
+. "${TOKORO_EXEC:-/usr/libexec/tokoro}/tokoro-lib.sh"
+
+cur=$(tokoro_current_tier)
+rec=$(tokoro_recommended_tier)
+
+# First run on a machine that never ran the wizard: detect but do not change
+# anything, so the applet can still show a recommendation.
+if [[ -z "$rec" ]]; then
+  rec=$("${TOKORO_EXEC}/tokoro-detect-hardware" --tier 2>/dev/null || echo "")
+fi
+
+tokoro_user_state_write "$cur" "$rec"

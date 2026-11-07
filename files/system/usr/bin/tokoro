@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# tokoro — front door for every Tokoro OS tool.
+set -euo pipefail
+
+# shellcheck source=/usr/libexec/tokoro/tokoro-lib.sh
+. "${TOKORO_EXEC:-/usr/libexec/tokoro}/tokoro-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Tokoro OS — JDM-themed, adaptive gaming distro
+
+Usage: tokoro <command> [args]
+
+  version            show the release version and car codename
+  banner             print the terminal banner
+  doctor             check that this machine really is Tokoro OS
+  tier               five-tier performance system (show/list/detect/set/reset)
+  mode               work/gaming toggle
+  wizard             first-boot wizard (hardware, tier, features, apps)
+  ai                 local on-device AI (status/models/enable/ask/explain)
+  fileguard <file>   explain what a file does before you run it
+  games              game compatibility database (list/info/excluded/stats)
+  bench              benchmark (run/play <game>)
+  smarthome         KIRA Bluetooth scenes (Quality tier and up)
+  acer               Acer Nitro V battery limit and performance modes
+  lean               list and disable optional background services
+
+Tiers: ultra-performance performance balanced quality ultra-quality
+EOF
+}
+
+cmd_version() {
+  printf 'Tokoro OS %s (%s)\n' "$(tokoro_version)" "$(tokoro_release_get codename 2>/dev/null || echo '')"
+  printf 'car: %s\n' "$(tokoro_release_get car 2>/dev/null || echo '')"
+}
+
+cmd_lean() {
+  local list=$TOKORO_SHARE/lean/optional-units.txt
+  if [[ "${1:-list}" == "list" ]]; then
+    [[ -r "$list" ]] || tokoro_die "optional unit list missing"
+    grep -v '^#' "$list" | grep -v '^$' | while read -r unit; do
+      state=$(systemctl is-enabled "$unit" 2>/dev/null || echo unknown)
+      printf '%-52s %s\n' "$unit" "$state"
+    done
+    printf '\nDisable an optional service: sudo tokoro lean disable <unit>\n'
+    return 0
+  fi
+  [[ "${1:-}" == "disable" && -n "${2:-}" ]] || tokoro_die "usage: tokoro lean [list|disable <unit>]"
+  tokoro_require_root
+  grep -qx "$2" <(grep -v '^#' "$list") ||
+    tokoro_die "$2 is not on the curated optional list; refusing to touch it"
+  systemctl disable --now "$2"
+  printf 'disabled %s\n' "$2"
+}
+
+main() {
+  local cmd=${1:-help}
+  shift || true
+  case "$cmd" in
+    version | --version) cmd_version ;;
+    banner) exec "$TOKORO_EXEC/tokoro-banner" "$@" ;;
+    doctor) exec "$TOKORO_EXEC/tokoro-doctor" "$@" ;;
+    tier) exec "$TOKORO_EXEC/tokoro-tier" "$@" ;;
+    mode) exec "$TOKORO_EXEC/tokoro-mode" "$@" ;;
+    wizard | firstboot) exec "$TOKORO_EXEC/tokoro-wizard" "$@" ;;
+    ai) exec "$TOKORO_EXEC/tokoro-ai" "$@" ;;
+    fileguard) exec "$TOKORO_EXEC/tokoro-fileguard" "$@" ;;
+    games) exec "$TOKORO_EXEC/tokoro-games" "$@" ;;
+    bench) exec "$TOKORO_EXEC/tokoro-bench" "$@" ;;
+    smarthome) exec "$TOKORO_EXEC/tokoro-smarthome" "$@" ;;
+    acer) exec "$TOKORO_EXEC/tokoro-acer" "$@" ;;
+    lean) cmd_lean "$@" ;;
+    -h | --help | help) usage ;;
+    *)
+      printf 'tokoro: unknown command: %s\n\n' "$cmd" >&2
+      usage
+      exit 2
+      ;;
+  esac
+}
+
+main "$@"

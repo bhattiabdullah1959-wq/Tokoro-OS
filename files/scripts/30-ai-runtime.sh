@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Installs the local AI runtime (Ollama) used by Tokoro AI.
+#
+# The runtime is optional at the image level: if the download fails we leave a
+# marker so `tokoro ai status` can explain the image was built without it,
+# instead of shipping a silently broken feature.
+set -euo pipefail
+
+OLLAMA_VERSION="${OLLAMA_VERSION:-0.40.15}"
+OLLAMA_ARCH="${OLLAMA_ARCH:-amd64}"
+base="https://github.com/ollama/ollama/releases/download/v${OLLAMA_VERSION}"
+assets_page="https://github.com/ollama/ollama/releases/expanded_assets/v${OLLAMA_VERSION}"
+
+# Asset names have changed between releases, so discover the right one from the
+# release page instead of hard-coding it. Fall back to the historical name.
+asset=""
+if page=$(curl -fsSL --max-time 30 "$assets_page" 2>/dev/null); then
+  asset=$(printf '%s' "$page" |
+    grep -oE "ollama-linux-${OLLAMA_ARCH}[A-Za-z0-9_.-]*\.(tgz|tar\.gz)" |
+    sort -u | head -n1)
+fi
+if [[ -z "$asset" ]]; then
+  echo "WARN: could not discover a Linux asset for Ollama v${OLLAMA_VERSION}" >&2
+  asset="ollama-linux-${OLLAMA_ARCH}.tgz"
+fi
+echo "asset: ${asset}"
+dest=/usr/libexec/tokoro/ollama
+marker=/usr/share/tokoro/ai/RUNTIME_MISSING
+
+echo "::group::Tokoro AI runtime (Ollama ${OLLAMA_VERSION})"
+install -d -m 0755 /usr/share/tokoro/ai "$dest"
+
+if ! curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 \
+  --output /tmp/ollama.tgz "${base}/${asset}"; then
+  echo "WARN: could not download ${base}/${asset}" >&2
+  printf 'image built without the Tokoro AI runtime (%s unavailable)\n' "$asset" >"$marker"
+  echo "::endgroup::"
+  exit 0
+fi
+
+tar -xzf /tmp/ollama.tgz -C "$dest"
+rm -f /tmp/ollama.tgz
+
+if [[ ! -x "$dest/bin/ollama" ]]; then
+  echo "WARN: tarball did not contain bin/ollama" >&2
+  printf 'image built with a broken Tokoro AI runtime archive\n' >"$marker"
+  echo "::endgroup::"
+  exit 0
+fi
+
+# Stable wrapper so services never depend on the internal layout.
+install -d -m 0755 /usr/libexec/tokoro/ollama/bin
+ln -sfn "$dest/bin/ollama" /usr/bin/tokoro-ollama
+
+rm -f "$marker"
+"$dest/bin/ollama" --version || echo "WARN: ollama --version failed at build time" >&2
+
+echo "installed $( "$dest/bin/ollama" --version 2>/dev/null | head -n1 || echo ollama )"
+echo "::endgroup::"

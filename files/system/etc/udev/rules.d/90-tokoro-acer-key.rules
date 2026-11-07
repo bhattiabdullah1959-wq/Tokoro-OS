@@ -1,0 +1,8 @@
+# Tokoro OS: Acer Nitro / Predator mode key.
+#
+# `tokoro acer learn` records the scan code of your Nitro key into
+# /etc/udev/hwdb.d/90-tokoro-acer-key.hwdb and remaps it to KEY_PROG1. This rule
+# then hands each press to tokoro-acer-cycle.service, which is debounced.
+#
+# The rule is inert on machines without the remap, so it is safe everywhere.
+ACTION=="add", SUBSYSTEM=="input", ENV{ID_INPUT_KEYBOARD}=="1", TAG+="systemd", ENV{SYSTEMD_WANTS}+="tokoro-acer-cycle.service"

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Tokoro Setup
+Comment=Detect hardware, pick a tier, choose features and apps
+Exec=/usr/bin/tokoro wizard
+Icon=preferences-system-performance
+Terminal=false
+Categories=System;Settings;
+Keywords=tokoro;tier;setup;wizard;driver;

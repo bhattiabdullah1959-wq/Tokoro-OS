@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2560" height="1440" viewBox="0 0 2560 1440">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#050609"/>
+      <stop offset="0.5" stop-color="#0e1216"/>
+      <stop offset="1" stop-color="#1b2026"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e8c88a"/>
+      <stop offset="1" stop-color="#a8874b"/>
+    </linearGradient>
+    <linearGradient id="floor" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#12161a"/>
+      <stop offset="1" stop-color="#05070a"/>
+    </linearGradient>
+  </defs>
+  <rect width="2560" height="1440" fill="url(#sky)"/>
+  <g opacity="0.35" stroke="#c9a96a" stroke-width="2">
+    <rect x="220" y="180" width="2120" height="700" fill="none"/>
+    <rect x="260" y="220" width="2040" height="620" fill="none"/>
+  </g>
+  <path d="M0 1000 L2560 960 L2560 1440 L0 1440 Z" fill="url(#floor)"/>
+  <ellipse cx="1300" cy="1210" rx="700" ry="60" fill="#000" opacity="0.5"/>
+  <g>
+    <path d="M600 1140 Q740 1042 950 1028 L1250 1018 Q1400 1008 1500 1036 L1720 1078 Q1810 1100 1840 1142 Z" fill="#141a20"/>
+    <path d="M950 1028 L1250 1018 L1320 1074 L980 1078 Z" fill="#212a32"/>
+    <path d="M1250 1018 L1400 1008 L1470 1050 L1320 1074 Z" fill="#1a2229"/>
+    <circle cx="800" cy="1150" r="58" fill="#070a0c"/>
+    <circle cx="1620" cy="1150" r="58" fill="#070a0c"/>
+    <circle cx="800" cy="1150" r="24" fill="url(#gold)"/>
+    <circle cx="1620" cy="1150" r="24" fill="url(#gold)"/>
+    <path d="M1840 1114 L2070 1106" stroke="url(#gold)" stroke-width="7" opacity="0.85"/>
+    <path d="M660 1108 q60 -18 120 0" stroke="#f6efdd" stroke-width="4" fill="none" opacity="0.35"/>
+  </g>
+  <g font-family="DejaVu Serif, serif">
+    <text x="180" y="1260" fill="#f6f2e8" font-size="86" font-weight="700" letter-spacing="20">TOKORO OS</text>
+    <text x="186" y="1330" fill="#e8c88a" font-size="34" letter-spacing="12">ULTRA QUALITY</text>
+    <text x="190" y="1382" fill="#7d7565" font-size="24" letter-spacing="6">LEXUS LS400 UCF10</text>
+  </g>
+</svg>

@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2560" height="1440" viewBox="0 0 2560 1440">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#07080b"/>
+      <stop offset="0.55" stop-color="#15161d"/>
+      <stop offset="1" stop-color="#2b1113"/>
+    </linearGradient>
+    <linearGradient id="road" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#16171c"/>
+      <stop offset="1" stop-color="#08090b"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ff3b30" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#ff3b30" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="2560" height="1440" fill="url(#sky)"/>
+  <circle cx="1860" cy="470" r="420" fill="url(#sun)"/>
+  <circle cx="1860" cy="470" r="150" fill="#ff3b30" opacity="0.85"/>
+  <path d="M0 1010 L600 960 L1200 995 L1900 940 L2560 985 L2560 1440 L0 1440 Z" fill="#0b0c10"/>
+  <path d="M0 1080 L2560 1020 L2560 1440 L0 1440 Z" fill="url(#road)"/>
+  <g opacity="0.9">
+    <path d="M700 1150 Q820 1078 980 1062 L1240 1052 Q1380 1041 1470 1060 L1690 1090 Q1780 1104 1810 1150 Z" fill="#1b1c22"/>
+    <path d="M980 1062 L1240 1052 L1300 1092 L1010 1096 Z" fill="#2a2c34" opacity="0.8"/>
+    <circle cx="900" cy="1156" r="58" fill="#0a0a0c"/>
+    <circle cx="1600" cy="1156" r="58" fill="#0a0a0c"/>
+    <circle cx="900" cy="1156" r="22" fill="#3a3d47"/>
+    <circle cx="1600" cy="1156" r="22" fill="#3a3d47"/>
+    <path d="M1810 1120 L2020 1112" stroke="#ff3b30" stroke-width="6" opacity="0.75"/>
+  </g>
+  <g font-family="DejaVu Sans, sans-serif">
+    <text x="180" y="1260" fill="#f4f5f7" font-size="86" font-weight="700" letter-spacing="18">TOKORO OS</text>
+    <text x="186" y="1330" fill="#ff3b30" font-size="34" letter-spacing="10">ULTRA PERFORMANCE</text>
+    <text x="190" y="1382" fill="#7a7f8c" font-size="24" letter-spacing="6">HONDA CIVIC TYPE R EK9</text>
+  </g>
+</svg>

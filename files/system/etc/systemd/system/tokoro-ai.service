@@ -1,0 +1,29 @@
+[Unit]
+Description=Tokoro OS local AI runtime (Ollama)
+Documentation=https://github.com/bhattiabdullah1959-wq/Tokoro-OS
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Tokoro AI is opt-in: `tokoro ai enable` starts this unit.
+Environment=OLLAMA_HOST=127.0.0.1:11435
+Environment=OLLAMA_MODELS=/var/lib/tokoro/ai/models
+Environment=OLLAMA_KEEP_ALIVE=5m
+Environment=OLLAMA_MAX_LOADED_MODELS=1
+Environment=OLLAMA_NUM_PARALLEL=1
+ExecStart=/usr/bin/tokoro-ollama serve
+Restart=on-failure
+RestartSec=5
+StateDirectory=tokoro
+StateDirectoryMode=0750
+# Loopback only, no shell, no new privileges.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ReadWritePaths=/var/lib/tokoro /var/lib/tokoro/ai
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

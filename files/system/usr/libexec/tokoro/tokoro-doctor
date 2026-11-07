@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# tokoro-doctor — verify that an installed Tokoro OS is actually Tokoro OS.
+#
+# This is the tool that answers "did the banner edit apply?" on a real machine.
+set -euo pipefail
+
+# shellcheck source=tokoro-lib.sh
+. "${TOKORO_EXEC:-/usr/libexec/tokoro}/tokoro-lib.sh"
+
+pass=0
+warn=0
+fail=0
+
+ok() { printf '  [ ok ] %s\n' "$*"; pass=$((pass + 1)); }
+notice() { printf '  [warn] %s\n' "$*"; warn=$((warn + 1)); }
+bad() { printf '  [FAIL] %s\n' "$*"; fail=$((fail + 1)); }
+
+section() { printf '\n%s\n' "$*"; }
+
+section "Identity"
+if grep -q '^NAME="Tokoro OS"' /usr/lib/os-release 2>/dev/null ||
+  grep -q '^NAME=Tokoro OS' /usr/lib/os-release 2>/dev/null; then
+  ok "os-release reports Tokoro OS"
+else
+  bad "os-release does not report Tokoro OS"
+fi
+if [[ -r /etc/tokoro/release.json ]]; then
+  ok "release metadata: $(tokoro_version) ($(tokoro_release_get codename 2>/dev/null))"
+else
+  bad "/etc/tokoro/release.json missing"
+fi
+
+section "Terminal banner"
+banner_hits=0
+if [[ -f /etc/profile.d/00-tokoro-banner.sh ]]; then
+  banner_hits=$((banner_hits + 1))
+  ok "interactive shell hook installed"
+else
+  bad "/etc/profile.d/00-tokoro-banner.sh missing"
+fi
+if [[ -f /etc/motd.d/00-tokoro-motd ]]; then
+  banner_hits=$((banner_hits + 1))
+  ok "/etc/motd.d/00-tokoro-motd installed"
+else
+  notice "/etc/motd.d drop-in missing"
+fi
+if [[ -f /usr/share/ublue-os/motd/template.md ]]; then
+  if grep -qi 'bazzite' /usr/share/ublue-os/motd/template.md; then
+    bad "ublue motd template still mentions Bazzite"
+  else
+    banner_hits=$((banner_hits + 1))
+    ok "ublue motd template rebranded"
+  fi
+elif [[ -f /etc/motd ]] && grep -q 'TOKORO-BANNER' /etc/motd; then
+  banner_hits=$((banner_hits + 1))
+  ok "/etc/motd carries the Tokoro banner"
+else
+  notice "no ublue motd template found; /etc/issue and the shell hook still apply"
+fi
+if [[ "$banner_hits" -eq 0 ]]; then
+  bad "no banner surface found"
+fi
+
+section "Tier system"
+if tokoro_state_load; then
+  ok "tier state: ${TOKORO_TIER} (recommended ${TOKORO_RECOMMENDED:-unknown})"
+else
+  notice "tier never set; the wizard has not run (defaults to balanced)"
+fi
+if [[ -r "$(tokoro_user_state_path)" ]]; then
+  ok "applet state present: $(tokoro_user_state_path)"
+else
+  notice "applet state missing; run: systemctl --user start tokoro-tier-watch"
+fi
+if tokoro_is_above_recommendation; then
+  notice "tier is above the hardware recommendation (passive warning expected)"
+fi
+detected=$("$TOKORO_EXEC/tokoro-detect-hardware" --tier 2>/dev/null || echo "")
+if [[ -n "$detected" ]]; then
+  ok "hardware detection works: recommends $detected"
+else
+  bad "hardware detection failed"
+fi
+
+section "Desktop integration"
+for tool in kwriteconfig6 qdbus6; do
+  if tokoro_have "$tool"; then ok "$tool present"; else notice "$tool missing (KDE settings skipped)"; fi
+done
+
+section "Local AI"
+if [[ -f $TOKORO_SHARE/ai/RUNTIME_MISSING ]]; then
+  notice "image built without the AI runtime: $(cat "$TOKORO_SHARE/ai/RUNTIME_MISSING")"
+elif [[ -x /usr/bin/tokoro-ollama ]]; then
+  ok "AI runtime installed"
+else
+  notice "AI runtime not present"
+fi
+if [[ -r $TOKORO_ETC/ai.json ]]; then
+  enabled=$("$TOKORO_EXEC/tokoro-ai" status 2>/dev/null | awk -F': ' '/^enabled/{print $2}')
+  ok "AI configured (enabled: ${enabled:-unknown})"
+else
+  notice "AI not configured (opt-in; tokoro ai enable)"
+fi
+
+section "Gaming"
+if "$TOKORO_EXEC/tokoro-games" validate >/dev/null 2>&1; then
+  count=$("$TOKORO_EXEC/tokoro-games" stats 2>/dev/null | awk -F': ' '/games rated/{print $2}')
+  ok "game dataset valid (${count:-?} games)"
+else
+  bad "game dataset failed validation"
+fi
+if [[ -r "${XDG_STATE_HOME:-$HOME/.local/state}/tokoro/bench/last.json" ]]; then
+  score=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["score"])' \
+    "${XDG_STATE_HOME:-$HOME/.local/state}/tokoro/bench/last.json" 2>/dev/null || echo "?")
+  ok "last benchmark score: $score"
+else
+  notice "benchmark never run (tokoro bench run)"
+fi
+if [[ -f "$TOKORO_USER_CONFIG/mode" ]]; then
+  ok "work/gaming state: $(cat "$TOKORO_USER_CONFIG/mode")"
+else
+  notice "work/gaming mode never toggled"
+fi
+
+section "Acer Nitro V"
+if "$TOKORO_EXEC/tokoro-acer" detect >/dev/null 2>&1; then
+  ok "Acer laptop detected; run: tokoro acer status"
+else
+  ok "not an Acer laptop; the feature is gated off as designed"
+fi
+
+printf '\nsummary: %d ok, %d warnings, %d failures\n' "$pass" "$warn" "$fail"
+[[ "$fail" -eq 0 ]]

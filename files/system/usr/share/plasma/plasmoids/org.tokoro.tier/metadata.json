@@ -1,0 +1,17 @@
+{
+  "KPlugin": {
+    "Id": "org.tokoro.tier",
+    "Name": "Tokoro Tier",
+    "Description": "Shows the active performance tier and warns passively when it is above the hardware recommendation",
+    "Icon": "preferences-system-performance",
+    "Authors": [
+      { "Name": "Tokoro OS" }
+    ],
+    "Version": "1.0.1",
+    "License": "GPL-3.0-or-later",
+    "Category": "System Information",
+    "ServiceTypes": ["Plasma/Applet"]
+  },
+  "X-Plasma-API-Minimum-Version": "6.0",
+  "KPackageStructure": "Plasma/Applet"
+}

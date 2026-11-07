@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# tokoro-apply-user — apply the desktop half of a wizard plan as the user.
+set -euo pipefail
+
+# shellcheck source=tokoro-lib.sh
+. "${TOKORO_EXEC:-/usr/libexec/tokoro}/tokoro-lib.sh"
+
+plan=${1:-$TOKORO_ETC/firstboot.json}
+[[ -r "$plan" ]] || tokoro_die "no plan found at $plan"
+
+apps_json=$TOKORO_SHARE/wizard/apps.json
+[[ -r "$apps_json" ]] || tokoro_die "missing $apps_json"
+
+tier=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["tier"])' "$plan")
+
+# Desktop settings for the chosen tier. System state was already written by
+# tokoro-apply-plan, so this only touches per-user files.
+apply_user_script() {
+  local t=$1
+  tokoro_tier_load "$t"
+  tokoro_kwrite kwinrc Compositing AnimationSpeed "${TIER_ANIM}" || true
+  tokoro_kwrite kwinrc Plugins blurEnabled \
+    "$([[ "${TIER_BLUR}" == "1" ]] && echo true || echo false)" || true
+  tokoro_kwrite kdeglobals General SoundThemeName "tokoro-$t" || true
+  if [[ -f "${TIER_WALLPAPER}" ]] && tokoro_have qdbus6; then
+    qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript \
+      "var ds=desktops();for(var i=0;i<ds.length;i++){ds[i].wallpaperPlugin='org.kde.image';ds[i].currentConfigGroup=['Wallpaper','org.kde.image','General'];ds[i].writeConfig('Image','file://${TIER_WALLPAPER}');}" \
+      >/dev/null 2>&1 || true
+  fi
+  tokoro_kwin_reconfigure || true
+}
+apply_user_script "$tier"
+tokoro_user_state_write "$tier" "$(tokoro_recommended_tier)"
+[[ -n "${TOKORO_DRY_RUN:-}" ]] && exit 0
+
+# Apps, one slot at a time.
+python3 - "$plan" "$apps_json" <<'PY' >/tmp/tokoro-apps.txt
+import json, sys
+plan = json.load(open(sys.argv[1]))
+apps = json.load(open(sys.argv[2]))
+choices = plan.get("apps", {})
+for slot, spec in apps["slots"].items():
+    picked = choices.get(slot, spec["default"])
+    option = next((o for o in spec["options"] if o["id"] == picked), None)
+    if option is None:
+        continue
+    if option["kind"] == "flatpak":
+        print("flatpak\t" + option["flatpak"])
+    elif option["kind"] == "github_jar":
+        print("jar\t" + option["repo"] + "\t" + option.get("asset_suffix", ".jar"))
+    else:
+        print("manual\t" + option.get("homepage", ""))
+PY
+
+while IFS=$'\t' read -r kind arg1 arg2; do
+  [[ -n "$kind" ]] || continue
+  case "$kind" in
+    flatpak)
+      if tokoro_have flatpak; then
+        flatpak install --user -y --noninteractive flathub "$arg1" >/dev/null 2>&1 &&
+          tokoro_info "installed $arg1" ||
+          tokoro_warn "flatpak install failed: $arg1 (run: flatpak install flathub $arg1)"
+      else
+        tokoro_warn "flatpak is not available; skipping $arg1"
+      fi
+      ;;
+    jar)
+      tokoro_have java || { tokoro_warn "java missing; $arg1 must be installed manually"; continue; }
+      dir="$HOME/.local/share/tokoro/apps/${arg1//\//-}"
+      mkdir -p "$dir"
+      url=$(curl -fsSL "https://api.github.com/repos/$arg1/releases/latest" 2>/dev/null |
+        python3 -c 'import json,sys
+try:
+    data=json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+suffix=sys.argv[1]
+for a in data.get("assets",[]):
+    if a.get("name","").endswith(suffix):
+        print(a["browser_download_url"]); break' "$arg2")
+      if [[ -z "$url" ]]; then
+        tokoro_warn "no release asset for $arg1; install it manually"
+        continue
+      fi
+      if curl -fsSL --retry 3 -o "$dir/app${arg2}" "$url"; then
+        mkdir -p "$HOME/.local/share/applications"
+        cat >"$HOME/.local/share/applications/tokoro-${arg1//\//-}.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=$(basename "$arg1")
+Exec=java -jar "$dir/app${arg2}"
+Terminal=false
+Categories=Game;Utility;
+DESKTOP
+        tokoro_info "installed $(basename "$arg1") to $dir"
+      else
+        tokoro_warn "download failed: $url"
+      fi
+      ;;
+    manual)
+      tokoro_info "manual install: $arg1"
+      tokoro_have xdg-open && xdg-open "$arg1" >/dev/null 2>&1 || true
+      ;;
+  esac
+done </tmp/tokoro-apps.txt
+rm -f /tmp/tokoro-apps.txt
+
+tokoro_info "desktop setup applied for tier $tier"

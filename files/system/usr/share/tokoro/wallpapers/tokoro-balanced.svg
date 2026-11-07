@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2560" height="1440" viewBox="0 0 2560 1440">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0d0f14"/>
+      <stop offset="0.45" stop-color="#22242b"/>
+      <stop offset="1" stop-color="#3a332a"/>
+    </linearGradient>
+    <linearGradient id="hill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1a1c21"/>
+      <stop offset="1" stop-color="#0b0c0f"/>
+    </linearGradient>
+  </defs>
+  <rect width="2560" height="1440" fill="url(#sky)"/>
+  <circle cx="1200" cy="520" r="190" fill="#f2e3c2" opacity="0.16"/>
+  <circle cx="1200" cy="520" r="96" fill="#f2e3c2" opacity="0.5"/>
+  <path d="M0 900 Q420 800 820 880 Q1240 964 1660 872 Q2100 776 2560 860 L2560 1440 L0 1440 Z" fill="#15171c"/>
+  <path d="M0 1040 Q520 950 1040 1020 Q1560 1090 2040 1000 Q2320 950 2560 990 L2560 1440 L0 1440 Z" fill="url(#hill)"/>
+  <g opacity="0.92">
+    <path d="M640 1150 Q760 1066 940 1052 L1220 1044 Q1370 1034 1470 1058 L1690 1094 Q1780 1112 1810 1152 Z" fill="#202329"/>
+    <path d="M940 1052 L1220 1044 L1280 1092 L970 1096 Z" fill="#2c3038" opacity="0.9"/>
+    <circle cx="840" cy="1160" r="54" fill="#0a0b0d"/>
+    <circle cx="1590" cy="1160" r="54" fill="#0a0b0d"/>
+    <circle cx="840" cy="1160" r="22" fill="#4a4f58"/>
+    <circle cx="1590" cy="1160" r="22" fill="#4a4f58"/>
+    <path d="M1810 1130 L1990 1124" stroke="#f2e3c2" stroke-width="5" opacity="0.7"/>
+  </g>
+  <g font-family="DejaVu Sans, sans-serif">
+    <text x="180" y="1260" fill="#f5f2ea" font-size="86" font-weight="700" letter-spacing="18">TOKORO OS</text>
+    <text x="186" y="1330" fill="#f2e3c2" font-size="34" letter-spacing="10">BALANCED</text>
+    <text x="190" y="1382" fill="#8b8578" font-size="24" letter-spacing="6">TOYOTA AE86 SPRINTER TRUENO</text>
+  </g>
+</svg>

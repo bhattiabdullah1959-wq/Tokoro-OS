@@ -1,0 +1,17 @@
+[Unit]
+Description=Tokoro OS Acer battery limiter
+Documentation=https://github.com/bhattiabdullah1959-wq/Tokoro-OS
+# Gate: does nothing on desktops and non-Acer laptops.
+ConditionPathExists=/sys/class/power_supply
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecCondition=/usr/libexec/tokoro/tokoro-acer detect
+ExecStart=/usr/libexec/tokoro/tokoro-acer battery limit on
+RemainAfterExit=yes
+# The limiter is a BIOS/driver feature; if the kernel hides it we exit quietly.
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=multi-user.target

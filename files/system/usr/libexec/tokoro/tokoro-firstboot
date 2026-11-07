@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Autostart entry point: run the wizard only if setup has not been completed.
+set -euo pipefail
+
+# shellcheck source=tokoro-lib.sh
+. "${TOKORO_EXEC:-/usr/libexec/tokoro}/tokoro-lib.sh"
+
+if [[ -r "$TOKORO_ETC/firstboot.json" ]]; then
+  exit 0
+fi
+exec /usr/bin/tokoro wizard "$@"

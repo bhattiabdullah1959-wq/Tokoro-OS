@@ -7,6 +7,8 @@ on:
   push:
     paths-ignore: # don't rebuild if only documentation has changed
       - "**.md"
+      - "docs/**"
+      - "tests/**"
 
   pull_request:
   workflow_dispatch: # allow manually triggering builds
@@ -16,7 +18,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   bluebuild:
-    name: Build Custom Image
+    name: Build ${{ matrix.recipe }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -26,8 +28,8 @@ jobs:
       fail-fast: false # stop GH from cancelling all matrix builds if one fails
       matrix:
         recipe:
-          # !! Add your recipes here
-          - recipe.yml
+          - recipe.yml # AMD / Intel
+          - recipe-nvidia.yml # NVIDIA
     steps:
       # the build is fully handled by the reusable github action
       - name: Build Custom Image
@@ -38,5 +40,5 @@ jobs:
           registry_token: ${{ github.token }}
           pr_event_number: ${{ github.event.number }}
 
-          # enabled by default, disable if your image is small and you want faster builds
+          # enabled by default, disable if your image is small and want faster builds
           maximize_build_space: true

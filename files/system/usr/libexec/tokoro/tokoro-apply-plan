@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# tokoro-apply-plan — privileged side of the first-boot wizard.
+#
+# Takes the plan file written by tokoro-wizard, stores the feature state and
+# applies every system-level change. User-level work (KDE settings, flatpaks) is
+# done by tokoro-apply-user afterwards so nothing runs as root unnecessarily.
+set -euo pipefail
+
+# shellcheck source=tokoro-lib.sh
+. "${TOKORO_EXEC:-/usr/libexec/tokoro}/tokoro-lib.sh"
+
+plan=${1:-}
+[[ -n "$plan" && -r "$plan" ]] || tokoro_die "usage: tokoro-apply-plan <plan.json>"
+tokoro_require_root
+
+tier=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["tier"])' "$plan")
+ai_enabled=$(python3 -c 'import json,sys; print("1" if json.load(open(sys.argv[1]))["features"].get("ai") else "0")' "$plan")
+ai_model=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("ai_model","auto"))' "$plan")
+acer_limit=$(python3 -c 'import json,sys; print("1" if json.load(open(sys.argv[1]))["features"].get("acer_battery_limit") else "0")' "$plan")
+smart_home=$(python3 -c 'import json,sys; print("1" if json.load(open(sys.argv[1]))["features"].get("smart_home") else "0")' "$plan")
+
+install -d -m 0755 "$TOKORO_ETC" "$TOKORO_STATE"
+
+# 1. Feature state, readable by the unprivileged tools.
+install -m 0644 "$plan" "$TOKORO_ETC/firstboot.json"
+python3 - "$plan" "$TOKORO_ETC/features.json" <<'PY'
+import json, sys, datetime
+plan = json.load(open(sys.argv[1]))
+out = {
+    "schema": 1,
+    "features": plan["features"],
+    "apps": plan["apps"],
+    "ai_model_requested": plan.get("ai_model", "auto"),
+    "tier": plan["tier"],
+    "applied": datetime.datetime.now(datetime.timezone.utc)
+        .replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+}
+json.dump(out, open(sys.argv[2], "w"), indent=2)
+PY
+
+# 2. Tier: system half only; the user half runs from the wizard's shell.
+tokoro_state_load || true
+TOKORO_TIER="$tier"
+[[ -n "${TOKORO_RECOMMENDED:-}" ]] || TOKORO_RECOMMENDED="$tier"
+if [[ "$tier" == "$TOKORO_RECOMMENDED" ]]; then TOKORO_OVERRIDE=0; else TOKORO_OVERRIDE=1; fi
+TOKORO_SET_BY="wizard"
+tokoro_state_save
+/usr/libexec/tokoro/tokoro-tier __apply-root "$tier" 0 || true
+
+# 3. AI opt-in.
+if [[ "$ai_enabled" == "1" ]]; then
+  /usr/libexec/tokoro/tokoro-ai enable --system-only --model "$ai_model" || \
+    tokoro_warn "AI could not be enabled; see: tokoro ai status"
+else
+  /usr/libexec/tokoro/tokoro-ai disable --system-only || true
+fi
+
+# 4. Acer battery limiter (self-gating, so this is a no-op on other laptops).
+if [[ "$acer_limit" == "1" ]] && /usr/libexec/tokoro/tokoro-acer detect >/dev/null 2>&1; then
+  /usr/libexec/tokoro/tokoro-acer battery limit on || \
+    tokoro_warn "battery limiter could not be enabled (Secure Boot?)"
+fi
+
+# 5. Smart home is config-only; the user supplies device addresses later.
+if [[ "$smart_home" == "1" ]]; then
+  install -d -m 0755 "$TOKORO_SHARE/kira"
+  if [[ ! -f "$TOKORO_SHARE/kira/kira.example.json" ]]; then
+    tokoro_warn "KIRA example config missing"
+  fi
+fi
+
+printf 'plan applied: tier=%s ai=%s smart_home=%s acer_battery=%s\n' \
+  "$tier" "$ai_enabled" "$smart_home" "$acer_limit"

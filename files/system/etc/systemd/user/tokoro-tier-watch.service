@@ -1,0 +1,13 @@
+[Unit]
+Description=Tokoro OS tier state watcher
+Documentation=https://github.com/bhattiabdullah1959-wq/Tokoro-OS
+
+[Service]
+Type=oneshot
+# Refreshes the per-user state the Plasma applet reads. Passive only: the
+# above-recommendation warning must never raise a popup.
+ExecStart=/usr/libexec/tokoro/tokoro-tier-watch
+RemainAfterExit=yes
+
+[Install]
+WantedBy=default.target

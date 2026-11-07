@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""tokoro-acer-learn — capture the Nitro key and install a udev/hwdb remap.
+
+Run as root on an Acer laptop, then press the Nitro (mode) key. The tool reads
+raw input events, finds the key that was pressed, writes a systemd-hwdb entry
+mapping that scan code to KEY_PROG1, and the shipped udev rule starts
+tokoro-acer-cycle.service whenever KEY_PROG1 is pressed.
+"""
+from __future__ import annotations
+
+import glob
+import os
+import select
+import struct
+import subprocess
+import sys
+import time
+
+HWDB = "/etc/udev/hwdb.d/90-tokoro-acer-key.hwdb"
+EVENT_STRUCT = "llHHi"
+EVENT_SIZE = struct.calcsize(EVENT_STRUCT)
+KEY_MAX = 0x2FF
+# Linux input event types / codes we care about.
+EV_KEY = 0x01
+
+
+def keyboard_devices() -> list[tuple[str, str]]:
+    devices = []
+    for path in sorted(glob.glob("/dev/input/event*")):
+        try:
+            name = subprocess.run(
+                ["cat", f"/sys/class/input/{os.path.basename(path)}/device/name"],
+                capture_output=True, text=True, timeout=5).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            continue
+        devices.append((path, name or "unknown"))
+    return devices
+
+
+def capture(timeout: int = 30) -> tuple[str, str, int] | None:
+    devices = keyboard_devices()
+    if not devices:
+        print("no /dev/input/event* devices found", file=sys.stderr)
+        return None
+    print("Press the Nitro / mode key now (30s)...")
+    fds = {}
+    for path, name in devices:
+        try:
+            fh = open(path, "rb", buffering=0)
+            fds[fh.fileno()] = (fh, name)
+        except OSError:
+            continue
+    if not fds:
+        print("cannot read input devices; run as root", file=sys.stderr)
+        return None
+    deadline = time.time() + timeout
+    try:
+        while time.time() < deadline:
+            ready, _, _ = select.select(list(fds), [], [], 1)
+            for fd in ready:
+                fh, name = fds[fd]
+                data = fh.read(EVENT_SIZE)
+                if not data or len(data) < EVENT_SIZE:
+                    continue
+                _, _, ev_type, code, value = struct.unpack(EVENT_STRUCT, data)
+                if ev_type == EV_KEY and value == 1:
+                    print(f"captured code {code} (0x{code:x}) from {name}")
+                    return (name, os.readlink(f"/sys/class/input/event{fd}/device") if False else name, code)
+    finally:
+        for fh, _ in fds.values():
+            fh.close()
+    return None
+
+
+def main() -> int:
+    if os.geteuid() != 0:
+        print("run as root: pkexec tokoro-acer learn", file=sys.stderr)
+        return 1
+    found = capture()
+    if not found:
+        print("no key captured", file=sys.stderr)
+        return 1
+    name, _, code = found
+    if code > KEY_MAX:
+        print(f"code 0x{code:x} is outside the keyboard range", file=sys.stderr)
+        return 1
+    os.makedirs(os.path.dirname(HWDB), exist_ok=True)
+    existing = ""
+    if os.path.exists(HWDB):
+        existing = open(HWDB, encoding="utf-8").read()
+    if "KEYBOARD_KEY_%x=prog1" % code in existing:
+        print("mapping already present")
+    else:
+        with open(HWDB, "a", encoding="utf-8") as fh:
+            fh.write("# Written by tokoro-acer learn: Nitro key -> KEY_PROG1\n")
+            fh.write("evdev:name:*\n")
+            fh.write(" KEYBOARD_KEY_%x=prog1\n" % code)
+        print(f"wrote {HWDB}")
+    subprocess.run(["systemd-hwdb", "update"], check=False)
+    subprocess.run(["udevadm", "trigger", "--subsystem-match=input"], check=False)
+    print("Done. Pressing the key now cycles the Acer performance mode.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

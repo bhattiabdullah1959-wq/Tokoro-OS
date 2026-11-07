@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""tokoro-fileguard — explain what a file does before you run it.
+
+Static heuristics always run; when the local AI is enabled its explanation is
+appended. Exit codes: 0 safe, 10 caution, 20 dangerous. Wrappers (the Dolphin
+service menu, `tokoro ai explain`) use the code to decide what to surface.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+
+DANGEROUS_PATTERNS = [
+    (r"rm\s+-rf?\s+/(\s|$)", "recursive delete of the filesystem root"),
+    (r"rm\s+-rf?\s+~(/\s|$|\s)", "recursive delete of the home directory"),
+    (r"dd\s+[^\n]*of=/dev/(sd|nvme|mmcblk)", "raw write to a disk device"),
+    (r"mkfs\.\w+\s+/dev/", "formats a block device"),
+    (r"curl[^\n|]*\|\s*(ba)?sh", "pipes a remote script straight into a shell"),
+    (r"wget[^\n|]*\|\s*(ba)?sh", "pipes a remote script straight into a shell"),
+    (r"base64\s+(-d|--decode)[^\n]*\|\s*(ba)?sh", "decodes then executes hidden content"),
+    (r"chmod\s+[0-7]*7[0-7]{2}\s+/", "makes a system path world-writable"),
+    (r"chown\s+[^\n]*\s+/(\s|$)", "changes ownership of the filesystem root"),
+    (r">\s*/etc/(passwd|shadow|sudoers)", "overwrites an authentication file"),
+    (r"history\s+-c", "clears shell history"),
+    (r"(nc|ncat|netcat)\s+[^\n]*-e\s", "opens a reverse shell"),
+    (r"/dev/tcp/", "opens a raw network socket"),
+    (r"eval\s+\$\((curl|wget)", "executes fetched content"),
+    (r"crontab\s+-r", "deletes all scheduled jobs"),
+    (r"shred\s+[^\n]*/(etc|usr|boot)/", "irreversibly wipes system files"),
+]
+
+SOURCING_PATTERNS = [
+    (r"\bsudo\b", "asks for root privileges"),
+    (r"\bgit clone\b", "clones a remote repository"),
+    (r"\bpip install\b|\bnpm install\b|\bcargo install\b", "installs packages"),
+    (r"\bsystemctl (enable|start)\b", "registers or starts a service"),
+    (r"\bcurl\b|\bwget\b", "downloads from the network"),
+    (r"\bssh\b|\bscp\b", "talks to another machine"),
+]
+
+EXECUTABLE_MAGIC = {b"\x7fELF": "ELF executable", b"#!": "script with a shebang"}
+ARCHIVE_MAGIC = {
+    b"\x1f\x8b": "gzip archive",
+    b"PK\x03\x04": "zip archive",
+    b"BZh": "bzip2 archive",
+    b"\xfd7zXZ": "xz archive",
+}
+
+
+def read_head(path: str, size: int = 65536) -> bytes:
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(size)
+    except OSError:
+        return b""
+
+
+def describe_type(path: str, head: bytes, mode: int) -> tuple[str, list[str]]:
+    findings: list[str] = []
+    if os.path.islink(path):
+        return f"symbolic link -> {os.readlink(path)}", findings
+    if os.path.isdir(path):
+        return "directory", findings
+    for magic, label in EXECUTABLE_MAGIC.items():
+        if head.startswith(magic):
+            return label, findings
+    for magic, label in ARCHIVE_MAGIC.items():
+        if head.startswith(magic):
+            return label, findings
+    if head.startswith(b"<?xml"):
+        return "XML document", findings
+    if head.startswith(b"%PDF"):
+        return "PDF document", findings
+    if head.startswith(b"\x89PNG") or head.startswith(b"\xff\xd8"):
+        return "image", findings
+    if head and all(32 <= byte <= 126 or byte in (9, 10, 13) for byte in head[:512]):
+        return "text file", findings
+    return "binary data", findings
+
+
+def analyse(path: str) -> dict:
+    findings: list[str] = []
+    reasons: list[str] = []
+    if not os.path.lexists(path):
+        return {"path": path, "exists": False, "level": "caution", "score": 10,
+                "findings": ["file does not exist"], "reasons": ["nothing to inspect"]}
+
+    st = os.lstat(path)
+    mode = st.st_mode
+    head = read_head(path) if not stat.S_ISDIR(mode) else b""
+    kind, extra = describe_type(path, head, mode)
+    findings.extend(extra)
+
+    if mode & stat.S_ISUID:
+        findings.append("setuid bit set: runs with the file owner's privileges")
+        reasons.append("privilege escalation risk")
+    if mode & stat.S_ISGID:
+        findings.append("setgid bit set")
+    if mode & stat.S_IWOTH:
+        findings.append("world-writable: any local user can modify it")
+        reasons.append("can be replaced by another user between checks")
+
+    text = ""
+    if head and b"\x00" not in head:
+        text = head.decode("utf-8", errors="replace")
+
+    for pattern, label in DANGEROUS_PATTERNS:
+        if text and re.search(pattern, text):
+            findings.append(f"contains: {label}")
+            reasons.append(label)
+
+    for pattern, label in SOURCING_PATTERNS:
+        if text and re.search(pattern, text):
+            findings.append(f"script {label}")
+
+    # Extension / magic mismatch is a classic disguise.
+    ext = os.path.splitext(path)[1].lower()
+    if ext in {".jpg", ".png", ".pdf", ".txt", ".mp3", ".mp4"} and \
+            (head.startswith(b"\x7fELF") or head.startswith(b"#!")):
+        findings.append(f"disguised: {ext} file is actually {kind}")
+        reasons.append("file type does not match its extension")
+
+    if stat.S_ISREG(mode) and mode & 0o111 and kind == "binary data":
+        findings.append("executable binary of unknown format")
+
+    score = 0
+    if any("disguised" in f for f in findings):
+        score += 30
+    if reasons:
+        score += 40
+    if mode & stat.S_ISUID:
+        score += 25
+    if kind.startswith("ELF") and kind != "ELF executable":
+        score += 10
+    level = "dangerous" if score >= 40 else "caution" if score >= 10 else "safe"
+    if not findings:
+        findings.append("no red flags in the static checks")
+    return {
+        "path": os.path.abspath(path),
+        "exists": True,
+        "kind": kind,
+        "size_bytes": st.st_size,
+        "executable": bool(mode & 0o111),
+        "level": level,
+        "score": score,
+        "findings": findings,
+        "reasons": sorted(set(reasons)),
+    }
+
+
+def ai_layer(result: dict) -> str | None:
+    """Ask the local model for a plain-language explanation, if it is enabled."""
+    exe = os.environ.get("TOKORO_EXEC", "/usr/libexec/tokoro")
+    ai = os.path.join(exe, "tokoro-ai")
+    if not os.access(ai, os.X_OK):
+        return None
+    status = subprocess.run([ai, "status"], capture_output=True, text=True, timeout=20)
+    if "enabled   : true" not in status.stdout:
+        return None
+    prompt = (
+        "Explain this file to a careful but non-expert Linux user in 3 short lines. "
+        "Say what it is, what it can change, and the worst realistic outcome.\n"
+        f"Path: {result['path']}\nDetected: {result.get('kind')}\n"
+        f"Static findings: {'; '.join(result['findings'])}"
+    )
+    ask = subprocess.run([ai, "ask", prompt], capture_output=True, text=True, timeout=180)
+    if ask.returncode != 0 or not ask.stdout.strip():
+        return None
+    return ask.stdout.strip()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Explain a file's safety")
+    parser.add_argument("path")
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--no-ai", action="store_true")
+    args = parser.parse_args()
+
+    result = analyse(args.path)
+    if not args.no_ai:
+        explanation = ai_layer(result)
+        if explanation:
+            result["ai_explanation"] = explanation
+
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"{result['path']}: {result.get('kind', 'missing')} — {result['level'].upper()}")
+        for finding in result["findings"]:
+            print(f"  - {finding}")
+        if result.get("ai_explanation"):
+            print("\nAI explanation:")
+            for line in result["ai_explanation"].splitlines():
+                print(f"  {line}")
+        if result["level"] == "dangerous":
+            print("\nDo not run this unless you trust where it came from.")
+        print()
+
+    return {"safe": 0, "caution": 10, "dangerous": 20}.get(result["level"], 0)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

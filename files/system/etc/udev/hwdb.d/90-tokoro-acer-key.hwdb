@@ -1,0 +1,14 @@
+# Tokoro OS: Acer mode-key remap.
+#
+# This file is intentionally empty of mappings. Run
+#
+#     sudo tokoro acer learn
+#
+# and press the Nitro key once. tokoro-acer-learn appends a mapping like
+#
+#     evdev:name:AT Translated Set 2 keyboard
+#      KEYBOARD_KEY_ab=prog1
+#
+# then reloads systemd-hwdb and re-triggers input devices. Keeping the mapping
+# out of the image avoids shipping a guessed scan code that could hijack a real
+# key on a different Nitro V revision.

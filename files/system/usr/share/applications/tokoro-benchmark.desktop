@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Tokoro Benchmark
+Comment=Score this machine and see which tier it can carry
+Exec=/usr/bin/tokoro bench run
+Icon=utilities-system-monitor
+Terminal=true
+Categories=System;
+Keywords=tokoro;benchmark;performance;

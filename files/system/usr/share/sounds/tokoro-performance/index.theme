@@ -1,0 +1,9 @@
+[Sound Theme]
+Name=Tokoro Performance
+Comment=Short, crisp cues for the Performance tier
+Inherits=freedesktop
+Example=bell
+Directories=stereo
+
+[stereo]
+OutputProfile=stereo

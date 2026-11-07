@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2560" height="1440" viewBox="0 0 2560 1440">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0a0710"/>
+      <stop offset="0.5" stop-color="#1d1226"/>
+      <stop offset="1" stop-color="#31203a"/>
+    </linearGradient>
+    <linearGradient id="street" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#140e1b"/>
+      <stop offset="1" stop-color="#080510"/>
+    </linearGradient>
+    <radialGradient id="neon" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ff5fd2" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#ff5fd2" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="2560" height="1440" fill="url(#sky)"/>
+  <circle cx="760" cy="430" r="380" fill="url(#neon)"/>
+  <g opacity="0.35" fill="#ff5fd2">
+    <rect x="300" y="620" width="16" height="260" rx="8"/>
+    <rect x="2280" y="560" width="16" height="320" rx="8"/>
+  </g>
+  <g opacity="0.5" stroke="#8b6bff" stroke-width="3" fill="none">
+    <path d="M0 760 H2560"/><path d="M0 820 H2560"/>
+  </g>
+  <path d="M0 1030 L2560 980 L2560 1440 L0 1440 Z" fill="url(#street)"/>
+  <g opacity="0.9">
+    <path d="M620 1150 Q740 1060 930 1046 L1220 1036 Q1380 1026 1480 1052 L1700 1090 Q1790 1110 1820 1154 Z" fill="#1c1424"/>
+    <path d="M930 1046 L1220 1036 L1288 1090 L960 1094 Z" fill="#33233f"/>
+    <circle cx="820" cy="1158" r="56" fill="#080510"/>
+    <circle cx="1600" cy="1158" r="56" fill="#080510"/>
+    <circle cx="820" cy="1158" r="23" fill="#ff5fd2" opacity="0.8"/>
+    <circle cx="1600" cy="1158" r="23" fill="#ff5fd2" opacity="0.8"/>
+    <path d="M1820 1126 L2040 1118" stroke="#ff5fd2" stroke-width="7" opacity="0.9"/>
+  </g>
+  <g font-family="DejaVu Sans, sans-serif">
+    <text x="180" y="1260" fill="#fbf4ff" font-size="86" font-weight="700" letter-spacing="18">TOKORO OS</text>
+    <text x="186" y="1330" fill="#ff5fd2" font-size="34" letter-spacing="10">QUALITY</text>
+    <text x="190" y="1382" fill="#9b86ad" font-size="24" letter-spacing="6">MAZDA RX-7 FD3S</text>
+  </g>
+</svg>
