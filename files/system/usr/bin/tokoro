@@ -15,6 +15,7 @@ Usage: tokoro <command> [args]
   banner             print the terminal banner
   doctor             check that this machine really is Tokoro OS
   status             one-screen health summary (test feature)
+  monitor            task manager: CPU, RAM, GPU, disk, processes (test feature)
   report             write a diagnostics bundle (test feature)
   music              open the configured music player (test feature)
   tier               five-tier performance system (show/list/detect/set/reset)
@@ -65,6 +66,7 @@ main() {
     banner) exec "$TOKORO_EXEC/tokoro-banner" "$@" ;;
     doctor) exec "$TOKORO_EXEC/tokoro-doctor" "$@" ;;
     status) exec "$TOKORO_EXEC/tokoro-status" "$@" ;;
+    monitor | top) exec "$TOKORO_EXEC/tokoro-monitor" "$@" ;;
     report) exec "$TOKORO_EXEC/tokoro-report" "$@" ;;
     music) exec "$TOKORO_EXEC/tokoro-music" "$@" ;;
     tier) exec "$TOKORO_EXEC/tokoro-tier" "$@" ;;

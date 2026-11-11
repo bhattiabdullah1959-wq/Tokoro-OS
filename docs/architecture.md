@@ -42,6 +42,7 @@ warning, never a half-branded image.
 /usr/libexec/tokoro/tokoro-acer      Acer Nitro V controls (hardware gated)
 /usr/libexec/tokoro/tokoro-doctor    self-check, including the banner
 /usr/libexec/tokoro/tokoro-status    one-screen health summary (test feature)
+/usr/libexec/tokoro/tokoro-monitor   task manager + storage breakdown (test feature)
 /usr/libexec/tokoro/tokoro-report    diagnostics bundle for bug reports (test feature)
 /usr/libexec/tokoro/tokoro-music     opens the player chosen during setup (test feature)
 /usr/share/tokoro/tiers/*.conf       one file per tier (shell-sourced)

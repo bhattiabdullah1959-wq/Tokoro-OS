@@ -113,6 +113,7 @@ run "acer: hardware gate" bash "$ROOT/tests/test_acer.sh"
 
 section "Test features"
 run "feature: status/report/music" python3 "$ROOT/tests/test_features.py"
+run "feature: monitor" python3 "$ROOT/tests/test_monitor.py"
 
 printf '\n%s\n' "----------------------------------------"
 if [[ "$failures" -eq 0 ]]; then

@@ -1,0 +1,474 @@
+#!/usr/bin/env python3
+"""tokoro-monitor — terminal task manager and usage dashboard.
+
+TEST FEATURE (docs/experimental.md).
+
+Shows what the machine is actually doing: CPU load and per-core activity, RAM
+and swap, GPU utilisation/VRAM where the driver exposes it, disk used/free, a
+colour-coded breakdown of what is using that disk (photos, videos, music, files,
+archives, other) and the top processes by memory.
+
+Everything comes from /proc, sysfs and the kernel's own filesystem numbers.
+Nothing is installed, nothing is written, nothing leaves the machine.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import stat
+import subprocess
+import sys
+import time
+
+TIERS = ["ultra-performance", "performance", "balanced", "quality", "ultra-quality"]
+
+PHOTOS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".bmp",
+          ".tif", ".tiff", ".raw", ".cr2", ".nef", ".arw", ".dng", ".svg"}
+VIDEOS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".wmv", ".flv",
+          ".mpg", ".mpeg", ".ts"}
+AUDIO = {".mp3", ".flac", ".ogg", ".opus", ".m4a", ".wav", ".aac", ".wma"}
+DOCUMENTS = {".pdf", ".txt", ".md", ".doc", ".docx", ".odt", ".xls", ".xlsx",
+             ".ods", ".ppt", ".pptx", ".odp", ".csv", ".json", ".xml", ".html",
+             ".epub", ".rtf"}
+ARCHIVES = {".zip", ".tar", ".gz", ".tgz", ".xz", ".zst", ".7z", ".rar", ".bz2"}
+
+# (key, label, 256-colour code, extensions). Order is the order shown.
+CATEGORIES = [
+    ("photos", "Photos", "38;5;213", PHOTOS),
+    ("videos", "Videos", "38;5;75", VIDEOS),
+    ("audio", "Music", "38;5;221", AUDIO),
+    ("documents", "Files", "38;5;114", DOCUMENTS),
+    ("archives", "Archives", "38;5;141", ARCHIVES),
+    ("other", "Other", "38;5;245", set()),
+]
+
+BAR_WIDTH = 22
+BREAKDOWN_WIDTH = 14
+
+
+def read(path: str, default: str = "") -> str:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read().strip()
+    except OSError:
+        return default
+
+
+def gb(value_kb: float) -> float:
+    return round(value_kb / (1024 ** 2), 1)
+
+
+# --- CPU ---------------------------------------------------------------------
+def cpu_cores_times(root: str) -> list[tuple[int, int]]:
+    """(total, idle) jiffies per core from /proc/stat; empty when unreadable."""
+    cores: list[tuple[int, int]] = []
+    for line in read(os.path.join(root, "proc/stat")).splitlines():
+        parts = line.split()
+        if not parts or not parts[0].startswith("cpu") or parts[0] == "cpu":
+            continue
+        try:
+            values = [int(value) for value in parts[1:]]
+        except ValueError:
+            continue
+        idle = values[3] + (values[4] if len(values) > 4 else 0)
+        cores.append((sum(values), idle))
+    return cores
+
+
+def usage_percent(cores: list[tuple[int, int]]) -> float:
+    total = sum(entry[0] for entry in cores)
+    idle = sum(entry[1] for entry in cores)
+    if total <= 0:
+        return 0.0
+    return round(max(0.0, min(100.0, 100.0 * (total - idle) / total)), 1)
+
+
+def per_core_percent(cores: list[tuple[int, int]]) -> list[float]:
+    out = []
+    for total, idle in cores:
+        out.append(round(max(0.0, min(100.0, 100.0 * (total - idle) / total)), 1)
+                   if total else 0.0)
+    return out
+
+
+def cpu_model(root: str) -> dict:
+    cpuinfo = read(os.path.join(root, "proc/cpuinfo"))
+    model = ""
+    cores = 0
+    threads = 0
+    for line in cpuinfo.splitlines():
+        if line.startswith("model name") and not model:
+            model = line.split(":", 1)[-1].strip()
+        elif line.startswith("cpu cores") and not cores:
+            try:
+                cores = int(line.split(":", 1)[1].strip())
+            except ValueError:
+                pass
+        elif line.startswith("processor"):
+            threads += 1
+    return {"model": model or "unknown CPU", "cores": cores or threads, "threads": threads}
+
+
+def load_average(root: str) -> list[str]:
+    parts = read(os.path.join(root, "proc/loadavg")).split()
+    return parts[:3]
+
+
+# --- memory ------------------------------------------------------------------
+def memory(root: str) -> dict:
+    info: dict[str, int] = {}
+    for line in read(os.path.join(root, "proc/meminfo")).splitlines():
+        if ":" not in line:
+            continue
+        key, _, rest = line.partition(":")
+        fields = rest.split()
+        if not fields:
+            continue
+        try:
+            info[key.strip()] = int(fields[0])
+        except ValueError:
+            continue
+    total = info.get("MemTotal", 0)
+    available = info.get(
+        "MemAvailable",
+        info.get("MemFree", 0) + info.get("Buffers", 0) + info.get("Cached", 0))
+    used = max(0, total - available)
+    swap_total = info.get("SwapTotal", 0)
+    swap_free = info.get("SwapFree", 0)
+    return {
+        "total_gb": gb(total),
+        "used_gb": gb(used),
+        "available_gb": gb(available),
+        "percent": round(100.0 * used / total, 1) if total else 0.0,
+        "swap_total_gb": gb(swap_total),
+        "swap_used_gb": gb(max(0, swap_total - swap_free)),
+    }
+
+
+# --- GPU ---------------------------------------------------------------------
+def gpus(root: str) -> list[dict]:
+    found: list[dict] = []
+    if root == "/" and shutil.which("nvidia-smi"):
+        try:
+            result = subprocess.run(
+                ["nvidia-smi",
+                 "--query-gpu=name,memory.total,memory.used,utilization.gpu",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=10, check=False)
+            for line in result.stdout.strip().splitlines():
+                parts = [part.strip() for part in line.split(",")]
+                if len(parts) < 4:
+                    continue
+                found.append({
+                    "vendor": "NVIDIA",
+                    "name": parts[0],
+                    "vram_total_mb": int(float(parts[1])),
+                    "vram_used_mb": int(float(parts[2])),
+                    "utilization": int(float(parts[3])),
+                })
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+
+    drm = os.path.join(root, "sys/class/drm")
+    vendors = {"0x10de": "NVIDIA", "0x1002": "AMD", "0x8086": "Intel"}
+    if os.path.isdir(drm):
+        for entry in sorted(os.listdir(drm)):
+            if not entry.startswith("card") or not entry[4:].isdigit():
+                continue
+            device = os.path.join(drm, entry, "device")
+            vendor_id = read(os.path.join(device, "vendor")).lower()
+            vendor = vendors.get(vendor_id, vendor_id or "unknown")
+            if vendor == "NVIDIA" and found:
+                continue
+            total = 0
+            used = 0
+            for name, target in (("mem_info_vram_total", "total"),
+                                 ("mem_info_vram_used", "used"),
+                                 ("lmem_total_bytes", "total")):
+                raw = read(os.path.join(device, name))
+                if not raw.isdigit():
+                    continue
+                value = int(raw) // (1024 ** 2)
+                if target == "total":
+                    total = total or value
+                else:
+                    used = value
+            found.append({
+                "vendor": vendor,
+                "name": f"{vendor} GPU ({entry})",
+                "vram_total_mb": total,
+                "vram_used_mb": used,
+                "utilization": None,
+            })
+    return found
+
+
+# --- storage -----------------------------------------------------------------
+def category_for(extension: str) -> str:
+    for key, _label, _colour, extensions in CATEGORIES:
+        if extension in extensions:
+            return key
+    return "other"
+
+
+def scan_storage(path: str, limit: int) -> dict:
+    sizes = {key: 0 for key, _label, _colour, _exts in CATEGORIES}
+    total = 0
+    files = 0
+    complete = True
+    for dirpath, dirnames, filenames in os.walk(path, onerror=lambda _err: None):
+        dirnames[:] = [name for name in dirnames if name not in ("proc", "sys", "dev", ".git")]
+        for name in filenames:
+            try:
+                info = os.stat(os.path.join(dirpath, name), follow_symlinks=False)
+            except OSError:
+                continue
+            if not stat.S_ISREG(info.st_mode):
+                continue
+            key = category_for(os.path.splitext(name)[1].lower())
+            sizes[key] += info.st_size
+            total += info.st_size
+            files += 1
+            if files >= limit:
+                complete = False
+                break
+        if not complete:
+            break
+    breakdown = []
+    for key, label, colour, _exts in CATEGORIES:
+        breakdown.append({
+            "key": key,
+            "label": label,
+            "colour": colour,
+            "bytes": sizes[key],
+            "share": round(100.0 * sizes[key] / total, 1) if total else 0.0,
+        })
+    return {
+        "path": os.path.abspath(path),
+        "files_scanned": files,
+        "bytes_scanned": total,
+        "scan_complete": complete,
+        "breakdown": breakdown,
+    }
+
+
+def disk(path: str) -> dict:
+    usage = shutil.disk_usage(path)
+    return {
+        "total_gb": round(usage.total / (1024 ** 3), 1),
+        "used_gb": round(usage.used / (1024 ** 3), 1),
+        "free_gb": round(usage.free / (1024 ** 3), 1),
+        "percent": round(100.0 * usage.used / usage.total, 1) if usage.total else 0.0,
+    }
+
+
+# --- processes ---------------------------------------------------------------
+def processes(root: str, limit: int) -> list[dict]:
+    base = os.path.join(root, "proc")
+    try:
+        pids = [name for name in os.listdir(base) if name.isdigit()]
+    except OSError:
+        return []
+    hz = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
+    entries = []
+    for pid in pids:
+        raw = read(os.path.join(base, pid, "stat"))
+        if not raw:
+            continue
+        try:
+            close = raw.rfind(")")
+            name = raw[raw.find("(") + 1:close]
+            fields = raw[close + 2:].split()
+            utime = int(fields[11])
+            stime = int(fields[12])
+        except (ValueError, IndexError):
+            continue
+        rss_kb = 0
+        for line in read(os.path.join(base, pid, "status")).splitlines():
+            if line.startswith("VmRSS:"):
+                try:
+                    rss_kb = int(line.split()[1])
+                except (IndexError, ValueError):
+                    rss_kb = 0
+                break
+        entries.append({
+            "pid": int(pid),
+            "name": name,
+            "rss_mb": round(rss_kb / 1024, 1),
+            "cpu_seconds": round((utime + stime) / hz, 1),
+        })
+    entries.sort(key=lambda item: item["rss_mb"], reverse=True)
+    return entries[:limit]
+
+
+# --- rendering ---------------------------------------------------------------
+class Paint:
+    def __init__(self, enabled: bool) -> None:
+        self.enabled = enabled
+        try:
+            "█".encode(sys.stdout.encoding or "utf-8")
+            self.block, self.empty = "█", "░"
+        except (UnicodeEncodeError, LookupError):
+            self.block, self.empty = "#", "-"
+
+    def wrap(self, text: str, colour: str) -> str:
+        return f"\033[{colour}m{text}\033[0m" if self.enabled else text
+
+    def bar(self, percent: float, width: int = BAR_WIDTH, colour: str = "") -> str:
+        filled = int(round(max(0.0, min(100.0, percent)) / 100 * width))
+        body = self.block * filled + self.empty * (width - filled)
+        return self.wrap(body, colour) if colour else body
+
+
+def human_bytes(size: float) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
+def snapshot(args: argparse.Namespace, paint: Paint) -> dict:
+    root = args.root
+    cores = cpu_cores_times(root)
+    memory_info = memory(root)
+    disk_info = disk(args.scan)
+    storage = scan_storage(args.scan, args.scan_limit) if not args.no_scan else {
+        "path": os.path.abspath(args.scan),
+        "files_scanned": 0,
+        "bytes_scanned": 0,
+        "scan_complete": False,
+        "breakdown": [],
+    }
+    return {
+        "schema": 1,
+        "test_feature": True,
+        "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "cpu": {
+            **cpu_model(root),
+            "usage": usage_percent(cores),
+            "per_core": per_core_percent(cores),
+            "load": load_average(root),
+        },
+        "memory": memory_info,
+        "gpus": gpus(root),
+        "storage": {**disk_info, **storage},
+        "processes": processes(root, args.top),
+    }
+
+
+def render(data: dict, paint: Paint) -> str:
+    cpu = data["cpu"]
+    mem = data["memory"]
+    disk_info = data["storage"]
+    lines = [
+        f"Tokoro monitor — CPU {cpu['model']} · "
+        f"{cpu['cores']} cores / {cpu['threads']} threads",
+    ]
+    load = " ".join(cpu["load"]) or "?"
+    lines.append(f"  load average {load}")
+    lines.append(f"  CPU    {paint.bar(cpu['usage'], colour='38;5;208')} {cpu['usage']:5.1f}%")
+    if cpu["per_core"]:
+        cores_line = " ".join(
+            f"{paint.block if value >= 50 else paint.empty}{value:3.0f}"
+            for value in cpu["per_core"][:16])
+        lines.append(f"  cores  {cores_line}")
+    else:
+        lines.append("  cores  unavailable (/proc/stat unreadable)")
+
+    lines.append("")
+    lines.append(f"  RAM    {paint.bar(mem['percent'], colour='38;5;39')} "
+                 f"{mem['used_gb']:5.1f} / {mem['total_gb']:.1f} GB used "
+                 f"({mem['percent']:.0f}%)")
+    if mem["swap_total_gb"]:
+        swap_percent = round(100.0 * mem["swap_used_gb"] / mem["swap_total_gb"], 1)
+        lines.append(f"  swap   {paint.bar(swap_percent, colour='38;5;141')} "
+                     f"{mem['swap_used_gb']:5.1f} / {mem['swap_total_gb']:.1f} GB")
+
+    lines.append("")
+    if data["gpus"]:
+        for gpu in data["gpus"]:
+            if gpu["vram_total_mb"]:
+                percent = round(100.0 * gpu["vram_used_mb"] / gpu["vram_total_mb"], 1)
+                lines.append(
+                    f"  GPU    {paint.bar(percent, colour='38;5;114')} "
+                    f"VRAM {gpu['vram_used_mb'] / 1024:.1f} / "
+                    f"{gpu['vram_total_mb'] / 1024:.1f} GB  {gpu['name']}")
+            else:
+                lines.append(f"  GPU    {gpu['name']} (VRAM not exposed by the driver)")
+    else:
+        lines.append("  GPU    no DRM device found")
+
+    lines.append("")
+    lines.append(f"  Disk   {disk_info['path']}  "
+                 f"{disk_info['used_gb']:.1f} / {disk_info['total_gb']:.1f} GB used "
+                 f"({disk_info['percent']:.0f}%) · {disk_info['free_gb']:.1f} GB free")
+    lines.append(f"         {paint.bar(disk_info['percent'], colour='38;5;208')}")
+    if disk_info["breakdown"]:
+        lines.append("")
+        for entry in disk_info["breakdown"]:
+            bar = paint.bar(entry["share"], width=BREAKDOWN_WIDTH,
+                            colour=entry["colour"])
+            lines.append(f"         {entry['label']:<9} {bar} "
+                         f"{human_bytes(entry['bytes']):>10}  {entry['share']:4.0f}%")
+        note = "" if disk_info["scan_complete"] else " (partial: file limit reached)"
+        lines.append(f"         scanned {disk_info['files_scanned']} files"
+                     f"{note}")
+
+    if data["processes"]:
+        lines.append("")
+        lines.append(f"  {'PID':>7}  {'MEM':>9}  {'CPU time':>9}  COMMAND")
+        for process in data["processes"]:
+            lines.append(f"  {process['pid']:>7}  {process['rss_mb']:>7.1f} MB  "
+                         f"{process['cpu_seconds']:>8.1f}s  {process['name'][:28]}")
+    return "\n".join(lines)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Tokoro task manager: CPU, RAM, GPU, disk and processes")
+    parser.add_argument("--json", action="store_true", help="machine readable snapshot")
+    parser.add_argument("--watch", action="store_true",
+                        help="redraw every --interval seconds (Ctrl+C to quit)")
+    parser.add_argument("--interval", type=float, default=2.0, help="seconds between redraws")
+    parser.add_argument("--top", type=int, default=8, help="processes to show by memory")
+    parser.add_argument("--scan", default=os.path.expanduser("~"),
+                        help="directory to break down by file type (default: home)")
+    parser.add_argument("--scan-limit", type=int, default=200000,
+                        help="stop the breakdown after this many files")
+    parser.add_argument("--no-scan", action="store_true",
+                        help="skip the file-type breakdown")
+    parser.add_argument("--no-color", action="store_true", help="never use ANSI colour")
+    parser.add_argument("--root", default=os.environ.get("TOKORO_ROOT", "/"),
+                        help="filesystem root to read /proc and /sys from (tests)")
+    args = parser.parse_args()
+
+    if args.interval <= 0:
+        parser.error("--interval must be greater than zero")
+
+    paint = Paint(enabled=sys.stdout.isatty() and not args.no_color
+                  and not os.environ.get("NO_COLOR"))
+    if args.json:
+        print(json.dumps(snapshot(args, paint), indent=2))
+        return 0
+
+    try:
+        while True:
+            data = snapshot(args, paint)
+            if args.watch and sys.stdout.isatty():
+                sys.stdout.write("\033[H\033[2J")
+            print(render(data, paint))
+            if not args.watch:
+                return 0
+            print("\nCtrl+C to quit")
+            sys.stdout.flush()
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        print()
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

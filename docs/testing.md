@@ -21,6 +21,7 @@ entirely against this repository: no root, no Tokoro install, no hardware.
 | `test_games.py` | Dataset validates: unique ids, allowed ratings/weights, expected exclusions |
 | `test_bench.py` | Benchmark scoring maps a synthetic machine to a tier and persists the result |
 | `test_features.py` | The test features against a fixture install: `status` JSON, `report` archive contents and permissions, `music` list/refusal/swap |
+| `test_monitor.py` | The task manager on a synthetic machine: CPU/RAM/GPU/disk numbers, the colour-coded file breakdown (including that symlinks are not followed), `--no-scan`, and rejection of a zero interval |
 | `test_acer.sh` | Acer detection passes on an Acer laptop fixture and fails on Dell/desktop fixtures |
 | `test_ai_caps.sh` | Each tier keeps exactly its documented AI abilities; refused commands fail before doing work; a missing runtime is reported missing; an above-recommendation tier is a warning (exit 3), never a refusal |
 
