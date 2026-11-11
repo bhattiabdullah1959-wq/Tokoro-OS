@@ -3,8 +3,8 @@
 ## Build layers
 
 ```
-recipes/recipe.yml          AMD/Intel image definition (base: bazzite:stable)
-recipes/recipe-nvidia.yml   NVIDIA image definition (base: bazzite-nvidia:stable)
+recipes/recipe.yml          tokoro-os image, AMD/Intel (base: bazzite:stable)
+recipes/recipe-nvidia.yml   tokoro-os-nvidia image (base: bazzite-nvidia:stable)
 files/system/               copied verbatim to / by the files module
 files/scripts/              build-time scripts, run in this order
 .github/workflows/build.yml builds both recipes, signs with cosign
@@ -41,6 +41,9 @@ warning, never a half-branded image.
 /usr/libexec/tokoro/tokoro-smarthome KIRA BLE scenes (tier gated)
 /usr/libexec/tokoro/tokoro-acer      Acer Nitro V controls (hardware gated)
 /usr/libexec/tokoro/tokoro-doctor    self-check, including the banner
+/usr/libexec/tokoro/tokoro-status    one-screen health summary (test feature)
+/usr/libexec/tokoro/tokoro-report    diagnostics bundle for bug reports (test feature)
+/usr/libexec/tokoro/tokoro-music     opens the player chosen during setup (test feature)
 /usr/share/tokoro/tiers/*.conf       one file per tier (shell-sourced)
 /usr/share/tokoro/release.json       version + car codenames (single source)
 /usr/share/tokoro/games/games.json   compatibility dataset

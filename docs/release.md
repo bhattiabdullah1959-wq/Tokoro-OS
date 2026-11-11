@@ -18,7 +18,7 @@ it:
 
 ## Image tags
 
-Both recipes publish:
+Both recipes (`tokoro-os` and `tokoro-os-nvidia`) publish the same tag set:
 
 ```
 latest
