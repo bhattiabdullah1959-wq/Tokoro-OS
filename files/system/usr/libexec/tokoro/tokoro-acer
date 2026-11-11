@@ -203,8 +203,8 @@ cmd_mode() {
     *" $mode "*) ;;
     *) tokoro_die "unknown mode: $mode (have: $(acer_modes))" ;;
   esac
-  # Writing platform_profile needs root; the udev-triggered service already is.
-  if [[ ! -w "$PLATFORM_PROFILE" ]] && ! tokoro_is_root; then
+  # Both the sysfs write and the /etc/tokoro state file need root.
+  if ! tokoro_is_root; then
     tokoro_as_root "$TOKORO_EXEC/tokoro-acer" mode "$mode"
     return
   fi

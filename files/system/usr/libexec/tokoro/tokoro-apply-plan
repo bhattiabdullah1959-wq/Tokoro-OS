@@ -44,20 +44,21 @@ TOKORO_TIER="$tier"
 [[ -n "${TOKORO_RECOMMENDED:-}" ]] || TOKORO_RECOMMENDED="$tier"
 if [[ "$tier" == "$TOKORO_RECOMMENDED" ]]; then TOKORO_OVERRIDE=0; else TOKORO_OVERRIDE=1; fi
 TOKORO_SET_BY="wizard"
+export TOKORO_TIER TOKORO_RECOMMENDED TOKORO_OVERRIDE TOKORO_SET_BY
 tokoro_state_save
-/usr/libexec/tokoro/tokoro-tier __apply-root "$tier" 0 || true
+"$TOKORO_EXEC/tokoro-tier" __apply-root "$tier" 0 || true
 
 # 3. AI opt-in.
 if [[ "$ai_enabled" == "1" ]]; then
-  /usr/libexec/tokoro/tokoro-ai enable --system-only --model "$ai_model" || \
+  "$TOKORO_EXEC/tokoro-ai" enable --system-only --model "$ai_model" || \
     tokoro_warn "AI could not be enabled; see: tokoro ai status"
 else
-  /usr/libexec/tokoro/tokoro-ai disable --system-only || true
+  "$TOKORO_EXEC/tokoro-ai" disable --system-only || true
 fi
 
 # 4. Acer battery limiter (self-gating, so this is a no-op on other laptops).
-if [[ "$acer_limit" == "1" ]] && /usr/libexec/tokoro/tokoro-acer detect >/dev/null 2>&1; then
-  /usr/libexec/tokoro/tokoro-acer battery limit on || \
+if [[ "$acer_limit" == "1" ]] && "$TOKORO_EXEC/tokoro-acer" detect >/dev/null 2>&1; then
+  "$TOKORO_EXEC/tokoro-acer" battery limit on || \
     tokoro_warn "battery limiter could not be enabled (Secure Boot?)"
 fi
 

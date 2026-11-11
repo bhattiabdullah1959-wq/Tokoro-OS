@@ -146,8 +146,13 @@ def collect(args: argparse.Namespace, ui, hw: dict, apps: dict) -> dict:
     """Build the install plan. Reads --answers when given, else prompts."""
     answers = {}
     if args.answers:
-        with open(args.answers, encoding="utf-8") as fh:
-            answers = json.load(fh)
+        try:
+            with open(args.answers, encoding="utf-8") as fh:
+                answers = json.load(fh)
+        except OSError as err:
+            raise SystemExit(f"cannot read answers file {args.answers}: {err}")
+        except json.JSONDecodeError as err:
+            raise SystemExit(f"answers file {args.answers} is not valid JSON: {err}")
 
     recommended = hw.get("recommended_tier", "balanced")
     score = hw.get("score", 0)

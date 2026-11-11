@@ -49,10 +49,15 @@ if command -v kwriteconfig6 >/dev/null 2>&1; then
     src="/usr/share/tokoro/wallpapers/tokoro-$tier.svg"
     [[ -f "$src" ]] || continue
     dst="/usr/share/wallpapers/Tokoro-$tier"
-    install -d -m 0755 "$dst"
-    install -m 0644 "$src" "$dst/contents/images/2560x1440.svg" 2>/dev/null ||
-      install -m 0644 "$src" "$dst/contents/images/1920x1080.svg" 2>/dev/null ||
-      true
+    # Without contents/images the install failed silently and System Settings
+    # never listed the tier wallpapers.
+    install -d -m 0755 "$dst/contents/images"
+    install -m 0644 "$src" "$dst/contents/images/2560x1440.svg"
+    # KDE only lists a wallpaper package that carries a metadata file.
+    if [[ ! -f "$dst/metadata.json" ]]; then
+      printf '{"KPlugin":{"Name":"Tokoro %s","Id":"Tokoro-%s","License":"MIT"}}\n' \
+        "$tier" "$tier" >"$dst/metadata.json"
+    fi
   done
 fi
 

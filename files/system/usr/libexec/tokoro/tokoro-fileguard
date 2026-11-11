@@ -159,8 +159,13 @@ def ai_layer(result: dict) -> str | None:
     ai = os.path.join(exe, "tokoro-ai")
     if not os.access(ai, os.X_OK):
         return None
-    status = subprocess.run([ai, "status"], capture_output=True, text=True, timeout=20)
-    if "enabled   : true" not in status.stdout:
+    status = subprocess.run([ai, "status", "--json"], capture_output=True, text=True, timeout=20)
+    # Parse the machine-readable form: matching the human layout by spacing
+    # broke silently whenever that layout changed.
+    try:
+        if not json.loads(status.stdout or "{}").get("enabled"):
+            return None
+    except json.JSONDecodeError:
         return None
     prompt = (
         "Explain this file to a careful but non-expert Linux user in 3 short lines. "

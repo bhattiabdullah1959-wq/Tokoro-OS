@@ -15,7 +15,8 @@ runtime=$TOKORO_STATE/ai/runtime/bin/ollama
 if [[ ! -x "$runtime" ]]; then
   printf 'tokoro-ai-serve: the AI runtime is not installed.\n' >&2
   printf 'Turn the assistant on to download it: tokoro ai enable\n' >&2
-  exit 1
+  # EX_CONFIG: the unit must not restart-loop while the runtime is absent.
+  exit 78
 fi
 
 exec "$runtime" serve

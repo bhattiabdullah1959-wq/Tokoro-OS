@@ -33,6 +33,9 @@ write_mode() {
 }
 
 save_previous() {
+  # A second `gaming` while already gaming must not overwrite the real
+  # pre-gaming profile, or `work` would restore the gaming one.
+  [[ "$(current_mode)" != "gaming" ]] || return 0
   install -d -m 0755 "$TOKORO_USER_CONFIG"
   local profile anim
   profile=$(powerprofilesctl get 2>/dev/null || echo unknown)

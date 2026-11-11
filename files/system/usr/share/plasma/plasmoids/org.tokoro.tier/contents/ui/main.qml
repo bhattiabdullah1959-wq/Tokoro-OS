@@ -70,6 +70,11 @@ PlasmoidItem {
     Plasmoid.backgroundHints: PlasmaCore.Types.NoBackground
 
     compactRepresentation: Item {
+        // Without an implicit size the panel reserves no space and the icon is
+        // invisible; the icon fills whatever height the panel hands us.
+        implicitWidth: Kirigami.Units.iconSizes.smallMedium
+        implicitHeight: Kirigami.Units.iconSizes.smallMedium
+
         Kirigami.Icon {
             anchors.fill: parent
             anchors.margins: Kirigami.Units.smallSpacing
@@ -282,7 +287,8 @@ PlasmoidItem {
         onNewData: (sourceName, data) => {
             actionSource.disconnectSource(sourceName);
             root.aiBusy = false;
-            if (root.aiEnableRequested) {
+            // Only offer the reboot when the download actually succeeded.
+            if (root.aiEnableRequested && data.exitCode === 0) {
                 root.rebootPrompt = true;
             }
             root.aiEnableRequested = false;

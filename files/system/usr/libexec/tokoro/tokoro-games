@@ -45,8 +45,12 @@ def current_tier() -> str:
         with open(state, encoding="utf-8") as fh:
             for line in fh:
                 if line.startswith("TOKORO_TIER="):
-                    return line.split("=", 1)[1].strip().strip("\"'")
-    except OSError:
+                    tier = line.split("=", 1)[1].strip().strip("\"'")
+                    # A hand-edited or half-written state file must not crash
+                    # the dataset browser with a ValueError.
+                    if tier in TIERS:
+                        return tier
+    except (OSError, ValueError):
         pass
     return "balanced"
 

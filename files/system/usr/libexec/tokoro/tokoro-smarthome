@@ -35,6 +35,9 @@ def tier_allowed() -> tuple[bool, str]:
                     tier = line.split("=", 1)[1].strip().strip('"\'')
     except OSError:
         pass
+    if tier not in TIERS:
+        # Never let a corrupt state file raise ValueError out of `list`.
+        tier = "balanced"
     return TIERS.index(tier) >= TIERS.index("quality"), tier
 
 

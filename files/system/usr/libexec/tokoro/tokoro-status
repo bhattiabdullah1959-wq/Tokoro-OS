@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# tokoro-status — one-screen health summary.
+#
+# TEST FEATURE (docs/experimental.md). Read-only: every value comes from the
+# tool that owns it, and nothing here changes the machine.
+set -euo pipefail
+
+# shellcheck source=tokoro-lib.sh
+. "${TOKORO_EXEC:-/usr/libexec/tokoro}/tokoro-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: tokoro status [--json]
+
+TEST FEATURE: one summary of everything that usually breaks on a new install.
+  tier and recommendation, work/gaming mode, the local AI, driver scan,
+  last benchmark score and pending system updates.
+
+Read-only. Nothing here changes the system.
+EOF
+}
+
+json=0
+case "${1:-}" in
+  --json) json=1 ;;
+  -h | --help | help) usage; exit 0 ;;
+  "") ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac
+
+state=$("$TOKORO_EXEC/tokoro-tier" status 2>/dev/null || printf '{}')
+ai=$("$TOKORO_EXEC/tokoro-ai" status --json 2>/dev/null || printf '{}')
+mode=$(cat "$TOKORO_USER_CONFIG/mode" 2>/dev/null || printf 'work')
+
+bench=never
+bench_file=${XDG_STATE_HOME:-$HOME/.local/state}/tokoro/bench/last.json
+if [[ -r "$bench_file" ]]; then
+  bench=$(python3 - "$bench_file" <<'PY' 2>/dev/null || printf 'never'
+import json, sys
+try:
+    print(json.load(open(sys.argv[1])).get("score", "never"))
+except Exception:
+    print("never")
+PY
+  )
+fi
+
+# The driver scan can take a few seconds (fwupd); a slow machine must not hang
+# the dashboard.
+drivers=unknown
+if out=$(timeout 12 "$TOKORO_EXEC/tokoro-drivers" scan --json 2>/dev/null); then
+  drivers=$(python3 -c 'import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    print("unknown"); raise SystemExit
+print("clean" if data.get("clean") else "attention")' <<<"$out" 2>/dev/null || printf 'unknown')
+fi
+
+updates=unknown
+if tokoro_have rpm-ostree; then
+  out=$(timeout 25 rpm-ostree upgrade --check 2>/dev/null || true)
+  if [[ -n "$out" ]]; then
+    if grep -qi 'no upgrade available' <<<"$out"; then
+      updates=none
+    else
+      updates=available
+    fi
+  fi
+fi
+
+python3 - "$json" "$(tokoro_version)" "$(tokoro_release_get codename 2>/dev/null || printf '')" \
+  "$mode" "$bench" "$drivers" "$updates" "$state" "$ai" <<'PY'
+import json
+import sys
+
+as_json = sys.argv[1] == "1"
+version, codename, mode, bench, drivers, updates = sys.argv[2:8]
+state = json.loads(sys.argv[8] or "{}")
+ai = json.loads(sys.argv[9] or "{}")
+
+warn = state.get("above_recommendation") is True
+caps = ai.get("capabilities") or []
+data = {
+    "schema": 1,
+    "test_feature": True,
+    "version": version,
+    "codename": codename,
+    "tier": state.get("tier", "balanced"),
+    "recommended": state.get("recommended"),
+    "above_recommendation": warn,
+    "mode": mode,
+    "ai": {
+        "enabled": ai.get("enabled", False),
+        "runtime": ai.get("runtime", "missing"),
+        "capabilities": caps,
+    },
+    "drivers": drivers,
+    "benchmark": bench,
+    "updates": updates,
+}
+
+if as_json:
+    print(json.dumps(data, indent=2))
+    raise SystemExit(0)
+
+if ai.get("enabled"):
+    ai_line = "enabled ({runtime} runtime{abilities})".format(
+        runtime=ai.get("runtime", "missing"),
+        abilities="; abilities: " + ", ".join(caps) if caps else "; chat only",
+    )
+else:
+    ai_line = "off (nothing downloaded)"
+
+recommended = state.get("recommended") or "not detected yet"
+print(f"Tokoro OS {version} ({codename})")
+print(f"  tier      : {data['tier']} (recommended {recommended})"
+      + ("   [!] above recommendation" if warn else ""))
+print(f"  mode      : {mode}")
+print(f"  AI        : {ai_line}")
+print(f"  drivers   : {drivers}")
+print(f"  benchmark : {'never run' if bench == 'never' else str(bench) + '/100'}")
+print(f"  updates   : {updates}")
+print("\nDetails: tokoro doctor, tokoro tier show, tokoro ai status")
+PY

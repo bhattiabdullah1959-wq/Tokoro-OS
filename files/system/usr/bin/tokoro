@@ -14,6 +14,9 @@ Usage: tokoro <command> [args]
   version            show the release version and car codename
   banner             print the terminal banner
   doctor             check that this machine really is Tokoro OS
+  status             one-screen health summary (test feature)
+  report             write a diagnostics bundle (test feature)
+  music              open the configured music player (test feature)
   tier               five-tier performance system (show/list/detect/set/reset)
   mode               work/gaming toggle
   wizard             first-boot wizard (hardware, tier, features, apps)
@@ -61,6 +64,9 @@ main() {
     version | --version) cmd_version ;;
     banner) exec "$TOKORO_EXEC/tokoro-banner" "$@" ;;
     doctor) exec "$TOKORO_EXEC/tokoro-doctor" "$@" ;;
+    status) exec "$TOKORO_EXEC/tokoro-status" "$@" ;;
+    report) exec "$TOKORO_EXEC/tokoro-report" "$@" ;;
+    music) exec "$TOKORO_EXEC/tokoro-music" "$@" ;;
     tier) exec "$TOKORO_EXEC/tokoro-tier" "$@" ;;
     mode) exec "$TOKORO_EXEC/tokoro-mode" "$@" ;;
     wizard | firstboot) exec "$TOKORO_EXEC/tokoro-wizard" "$@" ;;

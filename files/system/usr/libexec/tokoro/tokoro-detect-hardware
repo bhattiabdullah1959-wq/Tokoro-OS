@@ -215,7 +215,12 @@ def detect(root: str) -> dict:
     ps = os.path.join(root, "sys/class/power_supply")
     if os.path.isdir(ps):
         for entry in os.listdir(ps):
-            if entry.startswith("BAT") and os.path.exists(os.path.join(ps, entry, "present")):
+            if not entry.startswith("BAT"):
+                continue
+            # `present` is absent on plenty of firmware; `type` is the real
+            # signal, with the BAT* name as the fallback.
+            kind = read(os.path.join(ps, entry, "type"))
+            if kind == "Battery" or not kind:
                 batteries += 1
 
     is_acer = "acer" in (dmi["sys_vendor"] + dmi["board_vendor"]).lower()

@@ -1,0 +1,28 @@
+name: tests
+# The image build and the test suite are separate on purpose: a broken test must
+# fail visibly without publishing an image, and a test-only change must not wait
+# for (or trigger) a 40-minute image build.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  suite:
+    name: Fixture test suite
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq jq shellcheck
+          python3 -m pip install --quiet --break-system-packages pyyaml jsonschema referencing
+
+      - name: Run the suite
+        run: bash tests/run-tests.sh

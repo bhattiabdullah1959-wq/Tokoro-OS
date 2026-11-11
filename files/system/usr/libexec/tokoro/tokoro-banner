@@ -5,7 +5,6 @@ set -euo pipefail
 # shellcheck source=tokoro-lib.sh
 . "${TOKORO_EXEC:-/usr/libexec/tokoro}/tokoro-lib.sh"
 
-release_json="${TOKORO_SHARE}/release.json"
 version=$(tokoro_version)
 codename=$(tokoro_release_get codename 2>/dev/null || echo "")
 

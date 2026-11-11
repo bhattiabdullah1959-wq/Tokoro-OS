@@ -92,6 +92,9 @@ detect and advise. Details: [docs/acer.md](docs/acer.md).
 ```
 tokoro version            release version and car codename
 tokoro doctor             verify branding, banner, tier, AI, Acer state
+tokoro status             one-screen health summary (test feature)
+tokoro report             diagnostics bundle for a bug report (test feature)
+tokoro music              open the configured player (test feature)
 tokoro tier show|list|detect|set|reset|status
 tokoro mode work|gaming|toggle
 tokoro wizard             first-boot wizard

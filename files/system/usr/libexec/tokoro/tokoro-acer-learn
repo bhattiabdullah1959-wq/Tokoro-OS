@@ -47,7 +47,7 @@ def capture(timeout: int = 30) -> tuple[str, str, int] | None:
     for path, name in devices:
         try:
             fh = open(path, "rb", buffering=0)
-            fds[fh.fileno()] = (fh, name)
+            fds[fh.fileno()] = (fh, name, path)
         except OSError:
             continue
     if not fds:
@@ -58,16 +58,16 @@ def capture(timeout: int = 30) -> tuple[str, str, int] | None:
         while time.time() < deadline:
             ready, _, _ = select.select(list(fds), [], [], 1)
             for fd in ready:
-                fh, name = fds[fd]
+                fh, name, path = fds[fd]
                 data = fh.read(EVENT_SIZE)
                 if not data or len(data) < EVENT_SIZE:
                     continue
                 _, _, ev_type, code, value = struct.unpack(EVENT_STRUCT, data)
                 if ev_type == EV_KEY and value == 1:
                     print(f"captured code {code} (0x{code:x}) from {name}")
-                    return (name, os.readlink(f"/sys/class/input/event{fd}/device") if False else name, code)
+                    return (name, path, code)
     finally:
-        for fh, _ in fds.values():
+        for fh, _, _ in fds.values():
             fh.close()
     return None
 

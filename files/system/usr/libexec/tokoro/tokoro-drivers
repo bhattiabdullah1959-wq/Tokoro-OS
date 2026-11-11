@@ -72,10 +72,12 @@ cmd_scan() {
   done
 
   local devices complaints updates hints
-  devices=$(unclaimed_devices)
-  complaints=$(firmware_complaints)
-  updates=$(firmware_updates)
-  hints=$(gpu_hint)
+  # `set -e` + pipefail: a failing inspection tool must degrade the report, not
+  # abort the whole scan.
+  devices=$(unclaimed_devices || true)
+  complaints=$(firmware_complaints || true)
+  updates=$(firmware_updates || true)
+  hints=$(gpu_hint || true)
 
   if [[ "$as_json" -eq 1 ]]; then
     python3 - "$devices" "$complaints" "$updates" "$hints" <<'PY'

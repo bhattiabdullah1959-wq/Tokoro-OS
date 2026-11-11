@@ -52,31 +52,24 @@ for script in "$ROOT"/files/scripts/*.sh \
   fi
 done
 
-# Python tools have no .py extension in the image; compile them by path.
-for py in "$ROOT"/files/system/usr/libexec/tokoro/tokoro-wizard \
-  "$ROOT"/files/system/usr/libexec/tokoro/tokoro-detect-hardware \
-  "$ROOT"/files/system/usr/libexec/tokoro/tokoro-games \
-  "$ROOT"/files/system/usr/libexec/tokoro/tokoro-bench \
-  "$ROOT"/files/system/usr/libexec/tokoro/tokoro-fileguard \
-  "$ROOT"/files/system/usr/libexec/tokoro/tokoro-smarthome \
-  "$ROOT"/files/system/usr/libexec/tokoro/tokoro-acer-learn; do
+# Python tools have no .py extension in the image; find them by shebang so a new
+# tool cannot be forgotten here.
+for py in "$ROOT"/files/system/usr/libexec/tokoro/*; do
+  [[ -f "$py" ]] || continue
+  head -n1 "$py" | grep -q '^#!/usr/bin/env python3' || continue
   run "py_compile $(basename "$py")" python3 -m py_compile "$py"
 done
 
 if command -v shellcheck >/dev/null 2>&1; then
   section "shellcheck"
+  # Every bash tool, discovered rather than listed: a new script is linted the
+  # moment it lands.
   for script in "$ROOT"/files/scripts/*.sh \
     "$ROOT"/files/system/usr/bin/tokoro \
-    "$ROOT"/files/system/usr/libexec/tokoro/tokoro-lib.sh \
-    "$ROOT"/files/system/usr/libexec/tokoro/tokoro-tier \
-    "$ROOT"/files/system/usr/libexec/tokoro/tokoro-mode \
-    "$ROOT"/files/system/usr/libexec/tokoro/tokoro-ai \
-    "$ROOT"/files/system/usr/libexec/tokoro/tokoro-ai-runtime \
-    "$ROOT"/files/system/usr/libexec/tokoro/tokoro-ai-serve \
-    "$ROOT"/files/system/usr/libexec/tokoro/tokoro-drivers \
-    "$ROOT"/files/system/usr/libexec/tokoro/tokoro-acer \
-    "$ROOT"/files/system/usr/libexec/tokoro/tokoro-doctor; do
+    "$ROOT"/files/system/usr/libexec/tokoro/*; do
     [[ -f "$script" ]] || continue
+    head -n1 "$script" |
+      grep -qE '^(#!.*bin/(ba)?sh|#!/usr/bin/env bash|# shellcheck shell=bash)' || continue
     run "shellcheck $(basename "$script")" \
       shellcheck -x -S warning "$script"
   done
@@ -117,6 +110,9 @@ run "bench: score and persistence" python3 "$ROOT/tests/test_bench.py"
 
 section "Acer gating"
 run "acer: hardware gate" bash "$ROOT/tests/test_acer.sh"
+
+section "Test features"
+run "feature: status/report/music" python3 "$ROOT/tests/test_features.py"
 
 printf '\n%s\n' "----------------------------------------"
 if [[ "$failures" -eq 0 ]]; then

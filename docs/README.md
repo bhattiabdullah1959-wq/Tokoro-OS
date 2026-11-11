@@ -10,6 +10,7 @@
 | [games.md](games.md) | Compatibility dataset, ratings, expanding to 1000 titles |
 | [release.md](release.md) | Semver + car tags, version bump procedure |
 | [testing.md](testing.md) | What the test suite proves and what needs real hardware |
+| [experimental.md](experimental.md) | Test features: `tokoro status`, `report`, `music` |
 
 ## The short version
 

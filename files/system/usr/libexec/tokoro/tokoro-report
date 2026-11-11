@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# tokoro-report — collect a diagnostics bundle for a bug report.
+#
+# TEST FEATURE (docs/experimental.md). It only reads state and writes one
+# archive into the user's own directory; it never touches the system and never
+# uploads anything.
+set -euo pipefail
+
+# shellcheck source=tokoro-lib.sh
+. "${TOKORO_EXEC:-/usr/libexec/tokoro}/tokoro-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: tokoro report [--out DIR]
+
+TEST FEATURE: write tokoro-report-<date>.tar.gz containing the output of
+doctor, status, tier, the hardware/driver JSON, release metadata and the
+first-boot plan. Hostname and kernel are included; no file contents, no keys,
+nothing that leaves this machine.
+
+Default output directory: your home directory.
+EOF
+}
+
+out_dir=$HOME
+case "${1:-}" in
+  -h | --help | help) usage; exit 0 ;;
+  --out)
+    [[ -n "${2:-}" ]] || { usage; exit 2; }
+    out_dir=$2
+    ;;
+  "") ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac
+
+umask 077
+install -d -m 0700 "$out_dir"
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+# Each capture is best-effort: a broken subsystem must still produce a bundle.
+"$TOKORO_EXEC/tokoro-status" >"$work/status.txt" 2>&1 || true
+"$TOKORO_EXEC/tokoro-doctor" >"$work/doctor.txt" 2>&1 || true
+"$TOKORO_EXEC/tokoro-tier" show >"$work/tier.txt" 2>&1 || true
+"$TOKORO_EXEC/tokoro-ai" status >"$work/ai.txt" 2>&1 || true
+"$TOKORO_EXEC/tokoro-detect-hardware" --json >"$work/hardware.json" 2>/dev/null || true
+"$TOKORO_EXEC/tokoro-drivers" scan --json >"$work/drivers.json" 2>/dev/null || true
+"$TOKORO_EXEC/tokoro-games" stats >"$work/games.txt" 2>&1 || true
+cp "$TOKORO_SHARE/release.json" "$work/release.json" 2>/dev/null || true
+cp "$TOKORO_ETC/firstboot.json" "$work/firstboot.json" 2>/dev/null || true
+cp "$TOKORO_STATE_FILE" "$work/tier.conf" 2>/dev/null || true
+
+{
+  printf 'hostname: %s\n' "$(uname -n)"
+  printf 'kernel  : %s\n' "$(uname -r)"
+  printf 'arch    : %s\n' "$(uname -m)"
+  grep -E '^(NAME|VERSION|PRETTY_NAME|VARIANT_ID|IMAGE_VERSION)=' /etc/os-release 2>/dev/null || true
+  if tokoro_have rpm-ostree; then
+    printf '\n--- rpm-ostree status ---\n'
+    rpm-ostree status 2>/dev/null | head -n 30 || true
+  fi
+} >"$work/system.txt" 2>/dev/null || true
+
+stamp=$(date -u +%Y%m%d-%H%M%S)
+archive=$out_dir/tokoro-report-$stamp.tar.gz
+tar -czf "$archive" -C "$work" .
+
+printf 'wrote %s\n' "$archive"
+printf 'It contains diagnostics only; read it before sharing: tar -tzf %s\n' "$archive"

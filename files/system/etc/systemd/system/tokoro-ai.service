@@ -15,7 +15,12 @@ Environment=OLLAMA_NUM_PARALLEL=1
 ExecStart=/usr/libexec/tokoro/tokoro-ai-serve
 Restart=on-failure
 RestartSec=5
+# tokoro-ai-serve exits 78 when the runtime has not been downloaded. Without
+# this the unit would restart every 5 seconds forever instead of waiting for
+# `tokoro ai enable` to install it.
+RestartPreventExitStatus=78
 StateDirectory=tokoro
+StateDirectoryMode=0755
 # 0755 so the unprivileged CLI can see the binary it is asking about; models are
 # public weights, not secrets.
 StateDirectoryMode=0755

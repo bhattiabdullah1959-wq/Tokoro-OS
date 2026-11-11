@@ -208,7 +208,7 @@ cmd_set() {
 
   if ! tokoro_is_root; then
     # System state is root owned; re-exec through pkexec with an explicit marker.
-    tokoro_as_root /usr/libexec/tokoro/tokoro-tier __apply-root "$tier" "$no_apply" || return $?
+    tokoro_as_root "$TOKORO_EXEC/tokoro-tier" __apply-root "$tier" "$no_apply" || return $?
     # Desktop settings must be written as the invoking user, never as root.
     tokoro_user_state_write "$tier" "$(tokoro_recommended_tier)" \
       "$(tokoro_is_overridden && echo 1 || echo 0)"
@@ -248,7 +248,12 @@ detect_tier() {
 cmd_reset() {
   local rec
   rec=$(detect_tier)
-  tokoro_as_root /usr/libexec/tokoro/tokoro-tier __apply-root "$rec" 0
+  tokoro_as_root "$TOKORO_EXEC/tokoro-tier" __apply-root "$rec" 0
+  # `set` also updates the desktop half; reset used to leave KWin on the old
+  # tier until the next change.
+  if ! tokoro_is_root; then
+    apply_user "$rec"
+  fi
   printf 'reset to recommendation: %s\n' "$rec"
 }
 
@@ -284,7 +289,7 @@ main() {
       if tokoro_is_root; then
         apply_system "$(tokoro_current_tier)"
       else
-        tokoro_as_root /usr/libexec/tokoro/tokoro-tier __apply-root "$(tokoro_current_tier)" 0
+        tokoro_as_root "$TOKORO_EXEC/tokoro-tier" __apply-root "$(tokoro_current_tier)" 0
         apply_user "$(tokoro_current_tier)"
       fi
       ;;
