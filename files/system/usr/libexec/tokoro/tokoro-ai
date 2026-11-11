@@ -246,6 +246,9 @@ ensure_persona() { # model_id
   base=$(model_field "$id" base)
   [[ -n "$base" ]] || tokoro_die "unknown model: $id"
   bin=$(runtime_bin)
+  # The service listens on 11435, not Ollama's default 11434: without this the
+  # CLI would pull and create against nothing at all.
+  export OLLAMA_HOST=${endpoint#*://}
   tmp=$(mktemp)
   cat >"$tmp" <<EOF
 FROM $base
@@ -268,7 +271,11 @@ cmd_enable() {
     case "$1" in
       --system-only) system_only=1; shift ;;
       --reboot) reboot=1; shift ;;
-      --model) model=${2:-}; shift 2 ;;
+      --model)
+        model=${2:-}
+        [[ -n "$model" ]] || tokoro_die "--model needs an id (see: tokoro ai models)"
+        shift 2
+        ;;
       *)
         case "$1" in
           -*) shift ;;
@@ -385,20 +392,23 @@ $content"
 
 cmd_see() {
   local prompt=${1:-"Describe what is on the screen and what the user is doing."}
-  local shot req
   require_cap screen "seeing your screen"
   require_ready
-  shot=$(mktemp --suffix=.png)
+  # Globals, because the EXIT trap fires after this function has returned. A
+  # picture of the user's screen must never outlive a failed request.
+  ai_shot=$(mktemp --suffix=.png)
+  ai_req=""
+  trap 'rm -f "${ai_shot:-}" "${ai_req:-}"' EXIT
   if tokoro_have spectacle; then
-    spectacle --background --nonotify --fullscreen --output "$shot" >/dev/null 2>&1 ||
+    spectacle --background --nonotify --fullscreen --output "$ai_shot" >/dev/null 2>&1 ||
       tokoro_die "could not capture the screen with spectacle"
   elif tokoro_have grim; then
-    grim "$shot" >/dev/null 2>&1 || tokoro_die "could not capture the screen with grim"
+    grim "$ai_shot" >/dev/null 2>&1 || tokoro_die "could not capture the screen with grim"
   else
     tokoro_die "no screenshot tool available (install spectacle or grim)"
   fi
-  req=$(mktemp)
-  python3 - "$shot" "$(active_model)" "$prompt" >"$req" <<'PY'
+  ai_req=$(mktemp)
+  python3 - "$ai_shot" "$(active_model)" "$prompt" >"$ai_req" <<'PY'
 import base64, json, sys
 shot, model, prompt = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(shot, "rb") as fh:
@@ -407,13 +417,13 @@ print(json.dumps({"model": f"tokoro:{model}", "prompt": prompt,
                   "images": [image], "stream": False}))
 PY
   curl -fsS --max-time 180 "$endpoint/api/generate" \
-    -H 'Content-Type: application/json' --data-binary @"$req" |
+    -H 'Content-Type: application/json' --data-binary @"$ai_req" |
     python3 -c 'import json,sys
 try:
     print(json.load(sys.stdin).get("response","").strip())
 except Exception:
     sys.exit(4)'
-  rm -f "$shot" "$req"
+  rm -f "$ai_shot" "$ai_req"
 }
 
 cmd_open() {

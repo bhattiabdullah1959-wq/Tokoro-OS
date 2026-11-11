@@ -33,8 +33,10 @@ apply_user_script "$tier"
 tokoro_user_state_write "$tier" "$(tokoro_recommended_tier)"
 [[ -n "${TOKORO_DRY_RUN:-}" ]] && exit 0
 
-# Apps, one slot at a time.
-python3 - "$plan" "$apps_json" <<'PY' >/tmp/tokoro-apps.txt
+# Apps, one slot at a time. A private temp file, not a fixed /tmp name.
+apps_list=$(mktemp)
+trap 'rm -f "$apps_list"' EXIT
+python3 - "$plan" "$apps_json" <<'PY' >"$apps_list"
 import json, sys
 plan = json.load(open(sys.argv[1]))
 apps = json.load(open(sys.argv[2]))
@@ -57,6 +59,8 @@ while IFS=$'\t' read -r kind arg1 arg2; do
   case "$kind" in
     flatpak)
       if tokoro_have flatpak; then
+        flatpak remote-add --user --if-not-exists flathub \
+          https://dl.flathub.org/repo/flathub.flatpakrepo >/dev/null 2>&1 || true
         flatpak install --user -y --noninteractive flathub "$arg1" >/dev/null 2>&1 &&
           tokoro_info "installed $arg1" ||
           tokoro_warn "flatpak install failed: $arg1 (run: flatpak install flathub $arg1)"
@@ -102,7 +106,7 @@ DESKTOP
       tokoro_have xdg-open && xdg-open "$arg1" >/dev/null 2>&1 || true
       ;;
   esac
-done </tmp/tokoro-apps.txt
-rm -f /tmp/tokoro-apps.txt
+done <"$apps_list"
+rm -f "$apps_list"
 
 tokoro_info "desktop setup applied for tier $tier"

@@ -35,9 +35,18 @@ PlasmoidItem {
     property bool aiEnableRequested: false
     property bool rebootPrompt: false
 
-    function refresh() {
+    function refreshTier() {
         stateSource.connectSource(root.tierTool + " status");
+    }
+
+    // The AI probe runs python and curl, so it is polled far less often.
+    function refreshAi() {
         aiSource.connectSource(root.aiTool + " status --json");
+    }
+
+    function refresh() {
+        refreshTier();
+        refreshAi();
     }
 
     function runCommand(command) {
@@ -286,6 +295,14 @@ PlasmoidItem {
         running: true
         repeat: true
         triggeredOnStart: true
-        onTriggered: root.refresh()
+        onTriggered: root.refreshTier()
+    }
+
+    Timer {
+        interval: 20000
+        running: true
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: root.refreshAi()
     }
 }

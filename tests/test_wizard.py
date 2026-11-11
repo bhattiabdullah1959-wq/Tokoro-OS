@@ -48,7 +48,7 @@ def main() -> int:
             "ai": True,
             "smart_home": True,  # must be gated off: balanced is below quality
             "acer_battery_limit": True,
-            "apps": {"browser": "chrome"},
+            "apps": {"browser": "chrome", "music": "strawberry"},
         }, tmp)
         checks = [
             ("tier honoured", plan["tier"] == "balanced"),
@@ -56,6 +56,7 @@ def main() -> int:
             ("AI plan recorded", plan["features"]["ai"] is True),
             ("browser swap honoured", plan["apps"]["browser"] == "chrome"),
             ("untouched slots use defaults", plan["apps"]["chat"] == "vencord"),
+            ("music swap honoured", plan["apps"]["music"] == "strawberry"),
             ("AI model defaults to auto", plan["ai_model"] == "auto"),
             ("hardware block present", isinstance(plan["hardware"].get("score"), int)),
         ]
@@ -78,6 +79,7 @@ def main() -> int:
             ("smart home allowed on Ultra Quality", plan["features"]["smart_home"] is True),
             ("AI can be declined", plan["features"]["ai"] is False),
             ("launcher swap honoured", plan["apps"]["launcher"] == "prism"),
+            ("music falls back to the local default", plan["apps"]["music"] == "elisa"),
             ("world tool default", plan["apps"]["world_tools"] == "mca-selector"),
         ]
         for name, ok in checks:
@@ -103,10 +105,23 @@ def main() -> int:
                 print(f"FAIL: {name} (plan: {json.dumps(plan)})")
                 failures += 1
 
-    # A dry run must not write system state.
-    if (Path(tempfile.gettempdir()) / "nonexistent-tokoro-state").exists():
-        print("FAIL: unexpected state write")
-        failures += 1
+    # A dry run must not write system state: no plan file, no tier state.
+    with tempfile.TemporaryDirectory() as raw:
+        tmp = Path(raw)
+        plan_for({"tier": "balanced"}, tmp)
+        written = sorted(p.name for p in (tmp / "state").rglob("*") if p.is_file()) \
+            if (tmp / "state").exists() else []
+        checks = [
+            ("dry run writes no plan file", not (tmp / "state/firstboot-plan.json").exists()),
+            ("dry run leaves the state dir empty", written == []),
+            ("dry run writes no tier state", not (tmp / "etc/tier.conf").exists()),
+        ]
+        for name, ok in checks:
+            if ok:
+                print(f"ok: {name}")
+            else:
+                print(f"FAIL: {name} (wrote: {written})")
+                failures += 1
 
     return 0 if failures == 0 else 1
 

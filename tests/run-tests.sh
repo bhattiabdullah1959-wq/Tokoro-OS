@@ -102,6 +102,9 @@ run "tier: state + warning" bash "$ROOT/tests/test_tier.sh"
 section "Banner"
 run "banner: fixture tree" bash "$ROOT/tests/test_banner.sh"
 
+section "App selection"
+run "apps: slot definitions" python3 "$ROOT/tests/test_apps.py"
+
 section "Wizard"
 run "wizard: dry-run plan" python3 "$ROOT/tests/test_wizard.py"
 

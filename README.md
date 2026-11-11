@@ -62,8 +62,10 @@ scene in one step.
 ### First-boot wizard
 `tokoro wizard` (also offered automatically once) detects hardware, picks a tier,
 toggles features, and installs the app selection — defaults are **Zen,
-Vencord (Vesktop), SKLauncher and MCA Selector**, each swappable (Chrome instead
-of Zen, Prism instead of SKLauncher, and so on).
+Vencord (Vesktop), Elisa, SKLauncher and MCA Selector**, each swappable (Chrome
+instead of Zen, Strawberry or Amberol instead of Elisa, Prism instead of
+SKLauncher, and so on). Every app is installed as a user flatpak, so the music
+player works the same on both images.
 
 ### Signature features
 - **Live wallpaper support** via KDE's video/shader wallpaper plugins, plus five

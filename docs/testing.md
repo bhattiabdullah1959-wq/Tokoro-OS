@@ -16,7 +16,8 @@ entirely against this repository: no root, no Tokoro install, no hardware.
 | `test_detect.py` | Hardware scoring maps three fixture machines to the expected tiers |
 | `test_tier.sh` | Tier lookup, state parsing, above-recommendation detection, invalid tier rejection |
 | `test_banner.sh` | The banner script rewrites a real-shaped ublue template and is idempotent |
-| `test_wizard.py` | The wizard's `--dry-run --answers` plan is correct, including tier gating of smart home |
+| `test_apps.py` | Every app slot is complete: default is one of its options, flatpak ids are well formed and unique, manual options have a homepage, and the music slot defaults to a local player |
+| `test_wizard.py` | The wizard's `--dry-run --answers` plan is correct, including tier gating of smart home and that a dry run writes nothing |
 | `test_games.py` | Dataset validates: unique ids, allowed ratings/weights, expected exclusions |
 | `test_acer.sh` | Acer detection passes on an Acer laptop fixture and fails on Dell/desktop fixtures |
 | `test_ai_caps.sh` | Each tier keeps exactly its documented AI abilities; refused commands fail before doing work; a missing runtime is reported missing; an above-recommendation tier is a warning (exit 3), never a refusal |

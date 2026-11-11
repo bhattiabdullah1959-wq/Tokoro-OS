@@ -50,6 +50,47 @@
         }
       ]
     },
+    "music": {
+      "label": "Music",
+      "default": "elisa",
+      "options": [
+        {
+          "id": "elisa",
+          "name": "Elisa",
+          "kind": "flatpak",
+          "flatpak": "org.kde.elisa",
+          "note": "KDE's player: local library, no account, follows your Plasma theme"
+        },
+        {
+          "id": "strawberry",
+          "name": "Strawberry",
+          "kind": "flatpak",
+          "flatpak": "org.strawberrymusicplayer.strawberry",
+          "note": "Tag editing, playlists and internet radio for big local libraries"
+        },
+        {
+          "id": "amberol",
+          "name": "Amberol",
+          "kind": "flatpak",
+          "flatpak": "io.bassi.Amberol",
+          "note": "Minimal player for a folder of songs; nothing else"
+        },
+        {
+          "id": "lollypop",
+          "name": "Lollypop",
+          "kind": "flatpak",
+          "flatpak": "org.gnome.Lollypop",
+          "note": "Browse-by-artist player with online cover art"
+        },
+        {
+          "id": "spotify",
+          "name": "Spotify",
+          "kind": "flatpak",
+          "flatpak": "com.spotify.Client",
+          "note": "Streaming only; needs a Spotify account and is not local"
+        }
+      ]
+    },
     "launcher": {
       "label": "Minecraft launcher",
       "default": "sklauncher",

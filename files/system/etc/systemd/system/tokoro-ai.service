@@ -16,7 +16,9 @@ ExecStart=/usr/libexec/tokoro/tokoro-ai-serve
 Restart=on-failure
 RestartSec=5
 StateDirectory=tokoro
-StateDirectoryMode=0750
+# 0755 so the unprivileged CLI can see the binary it is asking about; models are
+# public weights, not secrets.
+StateDirectoryMode=0755
 # Loopback only, no shell, no new privileges.
 NoNewPrivileges=yes
 ProtectSystem=strict
