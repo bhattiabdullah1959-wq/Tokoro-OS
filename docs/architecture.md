@@ -45,6 +45,10 @@ warning, never a half-branded image.
 /usr/libexec/tokoro/tokoro-monitor   task manager + storage breakdown (test feature)
 /usr/libexec/tokoro/tokoro-report    diagnostics bundle for bug reports (test feature)
 /usr/libexec/tokoro/tokoro-music     opens the player chosen during setup (test feature)
+/usr/libexec/tokoro/tokoro-nowplaying MPRIS read/control for the widget (test feature)
+/usr/libexec/tokoro/tokoro-library   local music index for the widget (test feature)
+/usr/libexec/tokoro/tokoro-levels    level bars, real via cava or a pulse (test feature)
+/usr/share/plasma/plasmoids/org.tokoro.nowplaying  the music panel widget
 /usr/share/tokoro/tiers/*.conf       one file per tier (shell-sourced)
 /usr/share/tokoro/release.json       version + car codenames (single source)
 /usr/share/tokoro/games/games.json   compatibility dataset

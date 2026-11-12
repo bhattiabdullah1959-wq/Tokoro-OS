@@ -1,0 +1,18 @@
+{
+  "KPlugin": {
+    "Authors": [
+      {
+        "Name": "Tokoro OS"
+      }
+    ],
+    "Category": "Multimedia",
+    "Description": "Now playing, transport, level bars and your local library",
+    "EnabledByDefault": true,
+    "Icon": "media-playback-start",
+    "Id": "org.tokoro.nowplaying",
+    "License": "MIT",
+    "Name": "Tokoro Now Playing",
+    "Version": "1.0"
+  },
+  "X-Plasma-API-Minimum-Version": "6.0"
+}

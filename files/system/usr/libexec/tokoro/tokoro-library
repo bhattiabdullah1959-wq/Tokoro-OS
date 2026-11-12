@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""tokoro-library — index the user's local music for the now-playing widget.
+
+TEST FEATURE (docs/music.md).
+
+The widget's clickable list comes from here. Metadata is derived from the file
+name and folder (no tag-parsing dependency), so the index is fast, offline and
+never wrong about a file it does not understand.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+
+AUDIO = {".mp3", ".flac", ".ogg", ".opus", ".m4a", ".wav", ".aac", ".wma",
+         ".alac", ".aiff", ".aif", ".mka"}
+
+
+def data_home() -> str:
+    return os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
+
+
+def cache_path() -> str:
+    return os.path.join(data_home(), "tokoro", "library.json")
+
+
+def music_dirs(extra: list[str]) -> list[str]:
+    env = os.environ.get("TOKORO_MUSIC_DIRS", "")
+    candidates = [part for part in env.split(":") if part] + extra
+    if not candidates:
+        candidates = [os.path.expanduser("~/Music")]
+    out = []
+    for path in candidates:
+        path = os.path.abspath(os.path.expanduser(path))
+        if os.path.isdir(path) and path not in out:
+            out.append(path)
+    return out
+
+
+def scan(dirs: list[str], limit: int) -> dict:
+    tracks = []
+    seen = set()
+    complete = True
+    for root in dirs:
+        for dirpath, dirnames, filenames in os.walk(root, onerror=lambda _err: None):
+            dirnames[:] = [name for name in dirnames if not name.startswith(".")]
+            for name in sorted(filenames):
+                if os.path.splitext(name)[1].lower() not in AUDIO:
+                    continue
+                path = os.path.join(dirpath, name)
+                if path in seen:
+                    continue
+                seen.add(path)
+                try:
+                    info = os.stat(path)
+                except OSError:
+                    continue
+                relative = os.path.relpath(dirpath, root)
+                folder = "" if relative == "." else relative.split(os.sep)[0]
+                album = "" if relative == "." else os.path.basename(dirpath)
+                tracks.append({
+                    "path": path,
+                    "title": os.path.splitext(name)[0].replace("_", " ").strip(),
+                    "artist": folder,
+                    "album": album,
+                    "bytes": info.st_size,
+                    "modified": int(info.st_mtime),
+                })
+                if len(tracks) >= limit:
+                    complete = False
+                    break
+            if not complete:
+                break
+        if not complete:
+            break
+    tracks.sort(key=lambda track: (track["title"].lower(), track["path"]))
+    return {
+        "schema": 1,
+        "test_feature": True,
+        "roots": dirs,
+        "tracks": tracks,
+        "complete": complete,
+        "scanned": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+
+def load_cache() -> dict | None:
+    try:
+        with open(cache_path(), encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def save_cache(data: dict) -> None:
+    path = cache_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Index local music for the widget")
+    parser.add_argument("--json", action="store_true", help="machine readable output")
+    parser.add_argument("--refresh", action="store_true", help="rescan instead of using the cache")
+    parser.add_argument("--dir", action="append", default=[], help="extra music folder")
+    parser.add_argument("--limit", type=int, default=5000, help="stop after this many tracks")
+    parser.add_argument("--print-cache", action="store_true",
+                        help="print the cache path and exit")
+    args = parser.parse_args()
+
+    if args.print_cache:
+        print(cache_path())
+        return 0
+
+    dirs = music_dirs(args.dir)
+    cached = load_cache()
+    if cached is not None and not args.refresh and not args.dir:
+        data = cached
+    else:
+        data = scan(dirs, args.limit)
+        try:
+            save_cache(data)
+        except OSError as err:
+            print(f"warning: could not write {cache_path()}: {err}", file=sys.stderr)
+
+    if args.json:
+        print(json.dumps(data, indent=2))
+        return 0
+    print(f"Music library — {len(data['tracks'])} tracks")
+    for root in data["roots"]:
+        print(f"  root: {root}")
+    if not data["tracks"]:
+        print("\nNo audio files found. Add music to ~/Music, or set TOKORO_MUSIC_DIRS.")
+    for track in data["tracks"][:40]:
+        artist = f"{track['artist']} — " if track["artist"] else ""
+        print(f"  {artist}{track['title']}")
+    if len(data["tracks"]) > 40:
+        print(f"  … {len(data['tracks']) - 40} more")
+    if not data["complete"]:
+        print("\n(partial: the track limit was reached)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

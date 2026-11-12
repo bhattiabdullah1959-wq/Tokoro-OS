@@ -10,7 +10,8 @@
 | [games.md](games.md) | Compatibility dataset, ratings, expanding to 1000 titles |
 | [release.md](release.md) | Semver + car tags, version bump procedure |
 | [testing.md](testing.md) | What the test suite proves and what needs real hardware |
-| [experimental.md](experimental.md) | Test features: `tokoro status`, `report`, `music` |
+| [music.md](music.md) | Now-playing panel widget: MPRIS, level bars, local library |
+| [experimental.md](experimental.md) | Test features: `tokoro status`, `monitor`, `report`, `music`, `now`, `library`, `levels` |
 
 ## The short version
 

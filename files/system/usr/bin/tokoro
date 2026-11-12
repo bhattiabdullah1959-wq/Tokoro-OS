@@ -18,6 +18,9 @@ Usage: tokoro <command> [args]
   monitor            task manager: CPU, RAM, GPU, disk, processes (test feature)
   report             write a diagnostics bundle (test feature)
   music              open the configured music player (test feature)
+  now                control the current MPRIS player (test feature)
+  library            index local music for the widget (test feature)
+  levels             audio levels for the visualizer (test feature)
   tier               five-tier performance system (show/list/detect/set/reset)
   mode               work/gaming toggle
   wizard             first-boot wizard (hardware, tier, features, apps)
@@ -69,6 +72,9 @@ main() {
     monitor | top) exec "$TOKORO_EXEC/tokoro-monitor" "$@" ;;
     report) exec "$TOKORO_EXEC/tokoro-report" "$@" ;;
     music) exec "$TOKORO_EXEC/tokoro-music" "$@" ;;
+    now) exec "$TOKORO_EXEC/tokoro-nowplaying" "$@" ;;
+    library) exec "$TOKORO_EXEC/tokoro-library" "$@" ;;
+    levels) exec "$TOKORO_EXEC/tokoro-levels" "$@" ;;
     tier) exec "$TOKORO_EXEC/tokoro-tier" "$@" ;;
     mode) exec "$TOKORO_EXEC/tokoro-mode" "$@" ;;
     wizard | firstboot) exec "$TOKORO_EXEC/tokoro-wizard" "$@" ;;

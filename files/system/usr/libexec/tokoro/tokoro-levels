@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""tokoro-levels — per-band audio levels for the now-playing visualizer.
+
+TEST FEATURE (docs/music.md).
+
+Uses `cava` when it is installed: that is real spectral data from the audio
+sink, which is what makes the bars follow the music. Without cava it returns a
+deterministic pulse and says so in "source", so the widget never pretends a fake
+spectrum is real audio.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+CAVA_CONF = """[general]
+bars = {bars}
+framerate = 30
+[input]
+method = pulse
+source = auto
+[output]
+method = raw
+raw_target = /dev/stdout
+data_format = ascii
+ascii_max_range = 100
+bar_delimiter = 59
+frame_delimiter = 10
+channels = mono
+"""
+
+
+def have_cava() -> bool:
+    return shutil.which("cava") is not None
+
+
+def read_cava(bars: int, timeout: float) -> list[int] | None:
+    config = CAVA_CONF.format(bars=bars)
+    handle = tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False)
+    try:
+        handle.write(config)
+        handle.close()
+        process = subprocess.Popen(
+            ["cava", "-p", handle.name],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    except (OSError, subprocess.SubprocessError):
+        try:
+            os.unlink(handle.name)
+        except OSError:
+            pass
+        return None
+    try:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            line = process.stdout.readline() if process.stdout else ""
+            if not line:
+                break
+            values = [part for part in line.strip().split(";") if part.isdigit()]
+            if len(values) >= bars:
+                return [int(value) for value in values[:bars]]
+        return None
+    finally:
+        process.kill()
+        try:
+            process.wait(timeout=5)
+        except subprocess.SubprocessError:
+            pass
+        try:
+            os.unlink(handle.name)
+        except OSError:
+            pass
+
+
+def simulated(bars: int, phase: float) -> list[int]:
+    """A deterministic pulse: tests can pin it, the UI never looks frozen."""
+    out = []
+    for index in range(bars):
+        centre = math.sin(phase + index * 0.55)
+        ripple = math.sin(phase * 2.3 + index * 0.21)
+        value = 38 + 34 * centre + 18 * ripple
+        out.append(int(max(4, min(100, value))))
+    return out
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Audio levels for the visualizer")
+    parser.add_argument("--json", action="store_true", help="machine readable output")
+    parser.add_argument("--count", type=int, default=24, help="number of bars")
+    parser.add_argument("--available", action="store_true",
+                        help="exit 0 when real levels are possible (cava installed)")
+    parser.add_argument("--simulate", action="store_true", help="never use cava")
+    parser.add_argument("--phase", type=float, default=None, help="phase for --simulate")
+    args = parser.parse_args()
+
+    if args.count < 1 or args.count > 128:
+        parser.error("--count must be between 1 and 128")
+    if args.available:
+        return 0 if have_cava() else 1
+
+    phase = time.time() if args.phase is None else args.phase
+    values = None
+    source = "simulated"
+    if not args.simulate and have_cava():
+        values = read_cava(args.count, timeout=2.5)
+        if values:
+            source = "cava"
+    if values is None:
+        values = simulated(args.count, phase)
+
+    data = {"schema": 1, "test_feature": True, "source": source, "bars": values}
+    if args.json:
+        print(json.dumps(data))
+    else:
+        print(f"source: {source}")
+        print(" ".join(f"{value:3d}" for value in values))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

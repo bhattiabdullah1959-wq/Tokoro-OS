@@ -74,6 +74,28 @@ Tokoro monitor — CPU AMD Ryzen 7 5800H · 8 cores / 16 threads
 same data, `--no-color` and `NO_COLOR` produce plain text, and `--root` points
 `/proc` and `/sys` at a fixture, which is how it is tested.
 
+## Now-playing widget + `tokoro now` / `library` / `levels`
+
+The panel widget **Tokoro Now Playing** has its own page: [music.md](music.md).
+It talks to players over MPRIS (Spotify included, no account or API key), shows
+level bars from `cava` when that is installed, and lists your local music in a
+scrollable popup that plays on click. The three helpers behind it are testable
+today:
+
+```bash
+$ tokoro now
+Playing: One More Time — Daft Punk
+
+$ tokoro library
+Music library — 412 tracks
+  root: /home/you/Music
+  Discovery — One More Time
+  …
+
+$ tokoro levels --json
+{"schema": 1, "test_feature": true, "source": "simulated", "bars": [41, 63, …]}
+```
+
 ## `tokoro report [--out DIR]`
 
 Writes `tokoro-report-<date>.tar.gz` for a bug report:

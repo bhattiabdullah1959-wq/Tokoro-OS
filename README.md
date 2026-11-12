@@ -70,6 +70,10 @@ player works the same on both images.
 ### Signature features
 - **Live wallpaper support** via KDE's video/shader wallpaper plugins, plus five
   tier wallpapers under `/usr/share/tokoro/wallpapers/`.
+- **Now-playing panel widget**: current track and art, transport over MPRIS
+  (Spotify included, no account or API key), level bars fed by `cava` when it is
+  installed, and a scrollable local-music list that plays on click.
+  Details: [docs/music.md](docs/music.md).
 - **Local on-device AI**, fully skippable, five models named by engine
   displacement: Tokoro 0.6 (Cappuccino), 2 (S14), 3 (3000GT), 4.8 (LFA),
   5 (Century). The tier picks the model size. Details: [docs/ai.md](docs/ai.md).
@@ -96,6 +100,9 @@ tokoro status             one-screen health summary (test feature)
 tokoro monitor            task manager + storage breakdown (test feature)
 tokoro report             diagnostics bundle for a bug report (test feature)
 tokoro music              open the configured player (test feature)
+tokoro now                control the current player over MPRIS (test feature)
+tokoro library            index local music for the widget (test feature)
+tokoro levels             audio levels for the visualizer (test feature)
 tokoro tier show|list|detect|set|reset|status
 tokoro mode work|gaming|toggle
 tokoro wizard             first-boot wizard

@@ -1,0 +1,261 @@
+#!/usr/bin/env python3
+"""tokoro-nowplaying — read and control any MPRIS player, Spotify included.
+
+TEST FEATURE (docs/music.md).
+
+MPRIS is the native control channel on Linux: Spotify, Elisa, Strawberry, mpv
+and browser players all expose it, so the widget needs no account, no API key
+and no vendor SDK. Everything here talks to the session bus with `busctl`, which
+is part of the base system.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+PREFIX = "org.mpris.MediaPlayer2."
+OBJECT = "/org/mpris/MediaPlayer2"
+PLAYER = "org.mpris.MediaPlayer2.Player"
+
+
+def run(cmd: list[str], timeout: int = 8) -> subprocess.CompletedProcess | None:
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def players() -> list[str]:
+    result = run(["busctl", "--user", "list", "--no-legend"])
+    if result is None or result.returncode != 0:
+        return []
+    found = []
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if fields and fields[0].startswith(PREFIX):
+            found.append(fields[0])
+    return sorted(found)
+
+
+def get_property(player: str, name: str) -> str:
+    result = run(["busctl", "--user", "get-property", player, OBJECT, PLAYER, name])
+    if result is None or result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def tokenize(text: str) -> list[tuple[str, str]]:
+    """Split busctl/GVariant output into ("str"|"word", value) tokens."""
+    tokens: list[tuple[str, str]] = []
+    index = 0
+    length = len(text)
+    escapes = {"n": "\n", "t": "\t", '"': '"', "\\": "\\"}
+    while index < length:
+        while index < length and text[index].isspace():
+            index += 1
+        if index >= length:
+            break
+        if text[index] == '"':
+            index += 1
+            buffer: list[str] = []
+            while index < length:
+                char = text[index]
+                if char == "\\" and index + 1 < length:
+                    nxt = text[index + 1]
+                    buffer.append(escapes.get(nxt, nxt))
+                    index += 2
+                    continue
+                if char == '"':
+                    index += 1
+                    break
+                buffer.append(char)
+                index += 1
+            tokens.append(("str", "".join(buffer)))
+        else:
+            start = index
+            while index < length and not text[index].isspace():
+                index += 1
+            tokens.append(("word", text[start:index]))
+    return tokens
+
+
+def _read_value(tag: str, tokens: list[tuple[str, str]], index: int):
+    if tag in ("s", "o", "g"):
+        if index < len(tokens) and tokens[index][0] == "str":
+            return tokens[index][1], index + 1
+        return "", index + 1
+    if tag in ("as", "ao"):
+        count = 0
+        if index < len(tokens) and tokens[index][1].isdigit():
+            count = int(tokens[index][1])
+        index += 1
+        values = []
+        for _ in range(count):
+            if index < len(tokens) and tokens[index][0] == "str":
+                values.append(tokens[index][1])
+                index += 1
+        return values, index
+    if tag == "b":
+        value = index < len(tokens) and tokens[index][1] == "true"
+        return value, index + 1
+    if tag in ("x", "t", "n", "q", "i", "u", "y", "d"):
+        raw = tokens[index][1] if index < len(tokens) else "0"
+        index += 1
+        try:
+            return (float(raw) if tag == "d" else int(raw)), index
+        except ValueError:
+            return raw, index
+    return (tokens[index][1] if index < len(tokens) else ""), index + 1
+
+
+def parse_metadata(text: str) -> dict:
+    """Parse `busctl get-property ... Metadata` (an a{sv}) into a plain dict."""
+    tokens = tokenize(text)
+    if not tokens:
+        return {}
+    index = 2 if tokens[0][1].startswith("a{sv}") else 0
+    data: dict = {}
+    while index + 1 < len(tokens):
+        kind, key = tokens[index]
+        if kind != "str":
+            index += 1
+            continue
+        tag = tokens[index + 1][1]
+        value, index = _read_value(tag, tokens, index + 2)
+        data[key] = value
+    return data
+
+
+def text_property(raw: str) -> str:
+    """First string in `busctl` output, which prefixes values with a type tag."""
+    for kind, value in tokenize(raw):
+        if kind == "str":
+            return value
+    return ""
+
+
+def number_property(raw: str) -> float:
+    for kind, value in tokenize(raw):
+        if kind == "word":
+            try:
+                return float(value)
+            except ValueError:
+                continue
+    return 0.0
+
+
+def duration_seconds(value) -> float:
+    try:
+        return round(float(value) / 1_000_000, 1)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def snapshot(player: str | None = None) -> dict:
+    available = players()
+    chosen = player if player in available else (available[0] if available else "")
+    data = {
+        "schema": 1,
+        "test_feature": True,
+        "players": available,
+        "player": chosen,
+        "status": "Stopped",
+        "title": "",
+        "artist": "",
+        "album": "",
+        "art": "",
+        "length": 0.0,
+        "position": 0.0,
+        "can_go_next": False,
+        "can_go_previous": False,
+    }
+    if not chosen:
+        return data
+    meta = parse_metadata(get_property(chosen, "Metadata"))
+    artists = meta.get("xesam:artist") or []
+    if isinstance(artists, str):
+        artists = [artists]
+    data.update({
+        "status": text_property(get_property(chosen, "PlaybackStatus")) or "Stopped",
+        "title": str(meta.get("xesam:title") or ""),
+        "artist": ", ".join(str(item) for item in artists),
+        "album": str(meta.get("xesam:album") or ""),
+        "art": str(meta.get("mpris:artUrl") or ""),
+        "length": duration_seconds(meta.get("mpris:length")),
+        "position": round(number_property(get_property(chosen, "Position")) / 1_000_000, 1),
+        "can_go_next": number_property(get_property(chosen, "CanGoNext")) != 0,
+        "can_go_previous": number_property(get_property(chosen, "CanGoPrevious")) != 0,
+    })
+    return data
+
+
+def call(player: str, method: str, *args: str) -> int:
+    result = run(["busctl", "--user", "call", player, OBJECT, PLAYER, method, *args])
+    return 0 if result is not None and result.returncode == 0 else 1
+
+
+def active_player(requested: str | None) -> str:
+    available = players()
+    if requested and requested in available:
+        return requested
+    return available[0] if available else ""
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Control the current music player")
+    parser.add_argument("--json", action="store_true", help="machine readable snapshot")
+    parser.add_argument("--player", help="MPRIS name to use when several are running")
+    sub = parser.add_subparsers(dest="cmd")
+    sub.add_parser("status", help="show what is playing")
+    sub.add_parser("play-pause")
+    sub.add_parser("next")
+    sub.add_parser("previous")
+    sub.add_parser("players", help="list running MPRIS players")
+    sub.add_parser("raise", help="bring the player window to the front")
+    p = sub.add_parser("play", help="open a local file in the current player")
+    p.add_argument("path")
+    args = parser.parse_args()
+
+    if args.cmd == "players":
+        for name in players():
+            print(name)
+        return 0
+    if args.cmd is None or args.cmd == "status":
+        data = snapshot(args.player)
+        if args.json:
+            print(json.dumps(data, indent=2))
+            return 0 if data["player"] else 2
+        if not data["player"]:
+            print("no music player is running")
+            return 2
+        line = " — ".join(part for part in (data["title"], data["artist"]) if part)
+        print(f"{data['status']}: {line or 'nothing playing'}")
+        return 0
+
+    player = active_player(args.player)
+    if not player:
+        print("no music player is running", file=sys.stderr)
+        return 2
+    if args.cmd == "play-pause":
+        return call(player, "PlayPause")
+    if args.cmd == "next":
+        return call(player, "Next")
+    if args.cmd == "previous":
+        return call(player, "Previous")
+    if args.cmd == "raise":
+        return call(player, "Raise")
+    if args.cmd == "play":
+        path = os.path.abspath(os.path.expanduser(args.path))
+        if not os.path.exists(path):
+            print(f"no such file: {path}", file=sys.stderr)
+            return 1
+        return call(player, "OpenUri", "s", "file://" + path)
+    parser.print_help()
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
