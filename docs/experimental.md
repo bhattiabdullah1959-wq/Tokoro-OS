@@ -78,9 +78,10 @@ same data, `--no-color` and `NO_COLOR` produce plain text, and `--root` points
 
 The panel widget **Tokoro Now Playing** has its own page: [music.md](music.md).
 It talks to players over MPRIS (Spotify included, no account or API key), shows
-level bars from `cava` when that is installed, and lists your local music in a
-scrollable popup that plays on click. The three helpers behind it are testable
-today:
+level bars from `cava` when that is installed — animated only on the Quality and
+Ultra Quality tiers, so lower profiles never start cava — and lists your local
+music in a scrollable popup that plays on click. The three helpers behind it are
+testable today:
 
 ```bash
 $ tokoro now

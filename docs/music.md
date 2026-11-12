@@ -57,6 +57,16 @@ and it shows **live** next to the bars only when the values come from cava, so a
 fake spectrum is never presented as real. `tokoro levels --available` reports
 which mode you are in.
 
+### Animation follows the tier
+
+Animating means waking the CPU several times a second, so it is a premium-tier
+nicety: the bars animate only on **Quality** and **Ultra Quality**. On Ultra
+Performance, Performance and Balanced they stay flat, the widget says so, and
+`cava` is never started — the whole feature costs nothing on the tiers chosen
+for maximum frames or battery life. `tokoro levels --json` reports
+`"animated": false` in that case; change tier with `tokoro tier set quality`
+to turn the animation on.
+
 ## Helper commands (test features)
 
 ```bash

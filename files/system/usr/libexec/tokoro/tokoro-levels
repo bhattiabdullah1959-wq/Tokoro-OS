@@ -20,6 +20,11 @@ import sys
 import tempfile
 import time
 
+TIERS = ["ultra-performance", "performance", "balanced", "quality", "ultra-quality"]
+# Animating costs CPU wake-ups, so it is a premium-tier nicety: only the two best
+# profiles animate. Lower tiers get a flat line and never start cava at all.
+ANIMATED_TIERS = {"quality", "ultra-quality"}
+
 CAVA_CONF = """[general]
 bars = {bars}
 framerate = 30
@@ -39,6 +44,21 @@ channels = mono
 
 def have_cava() -> bool:
     return shutil.which("cava") is not None
+
+
+def current_tier() -> str:
+    """Stored tier, or "balanced" when it was never set or looks corrupt."""
+    path = os.environ.get("TOKORO_STATE_FILE", "/etc/tokoro/tier.conf")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("TOKORO_TIER="):
+                    tier = line.split("=", 1)[1].strip().strip("\"'")
+                    if tier in TIERS:
+                        return tier
+    except OSError:
+        pass
+    return "balanced"
 
 
 def read_cava(bars: int, timeout: float) -> list[int] | None:
@@ -97,6 +117,8 @@ def main() -> int:
                         help="exit 0 when real levels are possible (cava installed)")
     parser.add_argument("--simulate", action="store_true", help="never use cava")
     parser.add_argument("--phase", type=float, default=None, help="phase for --simulate")
+    parser.add_argument("--tier", choices=TIERS,
+                        help="override the tier instead of reading the stored state")
     args = parser.parse_args()
 
     if args.count < 1 or args.count > 128:
@@ -105,19 +127,36 @@ def main() -> int:
         return 0 if have_cava() else 1
 
     phase = time.time() if args.phase is None else args.phase
-    values = None
-    source = "simulated"
-    if not args.simulate and have_cava():
-        values = read_cava(args.count, timeout=2.5)
-        if values:
-            source = "cava"
-    if values is None:
-        values = simulated(args.count, phase)
+    tier = args.tier or current_tier()
+    animated = tier in ANIMATED_TIERS
+    values: list[int]
+    source: str
+    if not animated:
+        # Flat baseline: cava is never spawned, so a low tier pays nothing for
+        # a widget it does not animate.
+        values = [0] * args.count
+        source = "off"
+    elif not args.simulate and have_cava():
+        real = read_cava(args.count, timeout=2.5)
+        if real:
+            values, source = real, "cava"
+        else:
+            values, source = simulated(args.count, phase), "simulated"
+    else:
+        values, source = simulated(args.count, phase), "simulated"
 
-    data = {"schema": 1, "test_feature": True, "source": source, "bars": values}
+    data = {
+        "schema": 1,
+        "test_feature": True,
+        "tier": tier,
+        "animated": animated,
+        "source": source,
+        "bars": values,
+    }
     if args.json:
         print(json.dumps(data))
     else:
+        print(f"tier: {tier} (animated: {'yes' if animated else 'no'})")
         print(f"source: {source}")
         print(" ".join(f"{value:3d}" for value in values))
     return 0

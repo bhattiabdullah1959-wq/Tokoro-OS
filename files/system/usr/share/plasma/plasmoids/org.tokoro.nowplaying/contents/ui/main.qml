@@ -25,6 +25,9 @@ PlasmoidItem {
     property var tracks: []
     property var levels: []
     property bool realLevels: false
+    // Only the two best tiers animate; below that the bars stay flat and cava is
+    // never started, which keeps the widget free on battery/frame-focused tiers.
+    property bool levelsAnimated: false
     property string busyAction: ""
 
     // Popup geometry: tall enough that the list scrolls instead of the panel.
@@ -103,6 +106,14 @@ PlasmoidItem {
                         }
                     }
                 }
+            }
+
+            PlasmaComponents3.Label {
+                Layout.fillWidth: true
+                visible: !root.levelsAnimated
+                opacity: 0.55
+                font.pointSize: Kirigami.Theme.smallFont.pointSize
+                text: "Bars animate on the Quality and Ultra Quality tiers"
             }
 
             RowLayout {
@@ -265,6 +276,7 @@ PlasmoidItem {
             var payload = JSON.parse(data.stdout || "{}");
             root.levels = payload.bars || [];
             root.realLevels = payload.source === "cava";
+            root.levelsAnimated = payload.animated === true;
         } catch (error) {
             root.levels = [];
         }
@@ -345,18 +357,25 @@ PlasmoidItem {
         }
     }
 
-    // Levels: fast only when cava is installed; otherwise the bars would just
-    // be noise. One quick probe decides which timer runs.
+    // Levels: animating costs CPU, so only Quality and Ultra Quality animate.
+    // On lower tiers a slow poll is enough to notice a tier change.
     Timer {
-        interval: 100
-        running: root.realLevels
+        interval: 120
+        running: root.levelsAnimated && root.realLevels
         repeat: true
         onTriggered: root.refreshLevels()
     }
 
     Timer {
         interval: 700
-        running: !root.realLevels
+        running: root.levelsAnimated && !root.realLevels
+        repeat: true
+        onTriggered: root.refreshLevels()
+    }
+
+    Timer {
+        interval: 20000
+        running: !root.levelsAnimated
         repeat: true
         triggeredOnStart: true
         onTriggered: root.refreshLevels()

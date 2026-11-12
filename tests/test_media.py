@@ -150,7 +150,7 @@ def main() -> int:
     # --- levels ---------------------------------------------------------------
     levels = subprocess.run(
         [sys.executable, str(EXEC / "tokoro-levels"), "--json", "--simulate",
-         "--count", "16", "--phase", "0"],
+         "--count", "16", "--phase", "0", "--tier", "quality"],
         capture_output=True, text=True, timeout=30, env=env)
     check("levels: exits 0", levels.returncode == 0, levels.stderr.strip())
     try:
@@ -165,6 +165,54 @@ def main() -> int:
     check("levels: bars are in range", all(0 <= value <= 100 for value in bars), str(bars))
     check("levels: simulation is labelled", payload.get("source") == "simulated")
     check("levels: simulation is deterministic", bars == payload.get("bars"))
+    check("levels: top tiers animate", payload.get("animated") is True, str(payload))
+
+    # Tier gating: only the two best profiles animate; everything else is flat
+    # and must not spawn cava.
+    with tempfile.TemporaryDirectory() as gating:
+        state_file = Path(gating) / "tier.conf"
+        for tier, expected in (("ultra-performance", False), ("performance", False),
+                               ("balanced", False), ("quality", True),
+                               ("ultra-quality", True)):
+            state_file.write_text(f"TOKORO_TIER={tier}\n", encoding="utf-8")
+            gated_env = env.copy()
+            gated_env["TOKORO_STATE_FILE"] = str(state_file)
+            gated = subprocess.run(
+                [sys.executable, str(EXEC / "tokoro-levels"), "--json",
+                 "--simulate", "--count", "8"],
+                capture_output=True, text=True, timeout=30, env=gated_env)
+            try:
+                data = json.loads(gated.stdout)
+            except json.JSONDecodeError:
+                data = {}
+            check(f"levels: {tier} animates = {expected}",
+                  data.get("animated") is expected,
+                  f"rc={gated.returncode} out={gated.stdout[:80]}")
+            if not expected:
+                check(f"levels: {tier} bars are flat", data.get("bars") == [0] * 8,
+                      str(data.get("bars")))
+                check(f"levels: {tier} never starts cava", data.get("source") == "off",
+                      str(data.get("source")))
+
+        # A corrupt state file must not animate (or crash).
+        state_file.write_text("TOKORO_TIER=banana\n", encoding="utf-8")
+        corrupt_env = env.copy()
+        corrupt_env["TOKORO_STATE_FILE"] = str(state_file)
+        corrupt = subprocess.run(
+            [sys.executable, str(EXEC / "tokoro-levels"), "--json", "--count", "4"],
+            capture_output=True, text=True, timeout=30, env=corrupt_env)
+        check("levels: corrupt tier falls back to no animation",
+              corrupt.returncode == 0
+              and json.loads(corrupt.stdout).get("animated") is False,
+              corrupt.stdout[:80])
+
+        # --tier overrides the stored state.
+        override = subprocess.run(
+            [sys.executable, str(EXEC / "tokoro-levels"), "--json", "--simulate",
+             "--count", "4", "--tier", "ultra-quality"],
+            capture_output=True, text=True, timeout=30, env=corrupt_env)
+        check("levels: --tier overrides the state file",
+              json.loads(override.stdout).get("animated") is True)
 
     available = subprocess.run(
         [sys.executable, str(EXEC / "tokoro-levels"), "--available"],
