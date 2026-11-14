@@ -45,6 +45,7 @@ warning, never a half-branded image.
 /usr/libexec/tokoro/tokoro-monitor   System Overview: usage + storage breakdown (test feature)
 /usr/libexec/tokoro/tokoro-apps      running apps by resource use + startup apps (test feature)
 /usr/share/plasma/plasmoids/org.tokoro.overview  the System Overview panel widget
+/usr/share/plymouth/themes/spinner/watermark.png  Tokoro OS boot splash wordmark
 /usr/libexec/tokoro/tokoro-report    diagnostics bundle for bug reports (test feature)
 /usr/libexec/tokoro/tokoro-music     opens the player chosen during setup (test feature)
 /usr/libexec/tokoro/tokoro-nowplaying MPRIS read/control for the widget (test feature)

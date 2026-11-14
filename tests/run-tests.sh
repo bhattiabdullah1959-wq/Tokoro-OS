@@ -94,6 +94,7 @@ run "tier: state + warning" bash "$ROOT/tests/test_tier.sh"
 
 section "Banner"
 run "banner: fixture tree" bash "$ROOT/tests/test_banner.sh"
+run "splash: tokoro wordmark" python3 "$ROOT/tests/test_watermark.py"
 
 section "App selection"
 run "apps: slot definitions" python3 "$ROOT/tests/test_apps.py"
