@@ -83,8 +83,10 @@ The widget has four tabs: **Overview** (CPU, RAM, disk and the file breakdown),
 **Startup**. Every app row is coloured by how much of your memory and CPU it
 holds right now — green for little, yellow for medium, red for the most — and a
 right-click offers *Close app* (TERM to the app and its children, KILL only for
-what survives two seconds) or *Keep in background* (SIGSTOP, which freezes it
-with its memory intact; the same menu then brings it back).
+what survives two seconds) or *Keep in background*, which asks KWin to minimise
+the app's window — nothing is frozen, so it keeps painting and looks normal in
+the task bar; the same menu brings it back. That needs a Plasma session, and
+without one the command says so instead of guessing.
 
 The backend is tested on its own:
 

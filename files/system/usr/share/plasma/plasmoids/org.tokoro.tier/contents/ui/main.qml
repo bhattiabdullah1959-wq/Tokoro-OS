@@ -3,6 +3,7 @@ import QtQuick.Layouts
 
 import org.kde.plasma.plasmoid
 import org.kde.plasma.core as PlasmaCore
+import org.kde.plasma.plasma5support as Plasma5Support
 import org.kde.plasma.components as PlasmaComponents3
 import org.kde.plasma.extras as PlasmaExtras
 import org.kde.kirigami as Kirigami
@@ -249,7 +250,7 @@ PlasmoidItem {
         }
     }
 
-    PlasmaCore.DataSource {
+    Plasma5Support.DataSource {
         id: stateSource
         engine: "executable"
         onNewData: (sourceName, data) => {
@@ -265,7 +266,7 @@ PlasmoidItem {
         }
     }
 
-    PlasmaCore.DataSource {
+    Plasma5Support.DataSource {
         id: aiSource
         engine: "executable"
         onNewData: (sourceName, data) => {
@@ -281,7 +282,7 @@ PlasmoidItem {
         }
     }
 
-    PlasmaCore.DataSource {
+    Plasma5Support.DataSource {
         id: actionSource
         engine: "executable"
         onNewData: (sourceName, data) => {

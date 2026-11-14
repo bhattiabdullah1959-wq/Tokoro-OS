@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import org.kde.plasma.plasmoid
 import org.kde.plasma.core as PlasmaCore
+import org.kde.plasma.plasma5support as Plasma5Support
 import org.kde.plasma.components as PlasmaComponents3
 import org.kde.plasma.extras as PlasmaExtras
 import org.kde.kirigami as Kirigami
@@ -18,6 +19,7 @@ PlasmoidItem {
     property var startup: []
     property int tab: 0
     property bool busy: false
+    property string notice: ""
 
     function parse(payload) {
         try {
@@ -53,6 +55,7 @@ PlasmoidItem {
 
     function run(command) {
         root.busy = true;
+        root.notice = "";
         actionSource.connectSource(command);
     }
 
@@ -108,6 +111,15 @@ PlasmoidItem {
                     icon.name: "view-refresh"
                     onClicked: root.refreshAll()
                 }
+            }
+
+            PlasmaComponents3.Label {
+                Layout.fillWidth: true
+                visible: root.notice !== ""
+                text: root.notice
+                color: Kirigami.Theme.negativeTextColor
+                font.pointSize: Kirigami.Theme.smallFont.pointSize
+                wrapMode: Text.Wrap
             }
 
             PlasmaComponents3.TabBar {
@@ -554,7 +566,7 @@ PlasmoidItem {
     Plasmoid.backgroundHints: PlasmaCore.Types.NoBackground
 
     // --- data ---------------------------------------------------------------
-    PlasmaCore.DataSource {
+    Plasma5Support.DataSource {
         id: monitorSource
         engine: "executable"
         onNewData: (sourceName, data) => {
@@ -565,7 +577,7 @@ PlasmoidItem {
         }
     }
 
-    PlasmaCore.DataSource {
+    Plasma5Support.DataSource {
         id: appsSource
         engine: "executable"
         onNewData: (sourceName, data) => {
@@ -575,7 +587,7 @@ PlasmoidItem {
         }
     }
 
-    PlasmaCore.DataSource {
+    Plasma5Support.DataSource {
         id: startupSource
         engine: "executable"
         onNewData: (sourceName, data) => {
@@ -585,11 +597,12 @@ PlasmoidItem {
         }
     }
 
-    PlasmaCore.DataSource {
+    Plasma5Support.DataSource {
         id: actionSource
         engine: "executable"
         onNewData: (sourceName, data) => {
             root.busy = false;
+            root.notice = (data.stderr || "").trim();
             actionSource.disconnectSource(sourceName);
             root.refreshAll();
         }

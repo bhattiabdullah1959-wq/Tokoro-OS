@@ -163,22 +163,54 @@ def main() -> int:
         child = subprocess.Popen(["/bin/sleep", "60"])
         try:
             time.sleep(0.2)
-            frozen = run(["background", str(child.pid)])
-            check("background: exits 0", frozen.returncode == 0, frozen.stderr.strip())
-            state = ""
-            for _ in range(20):
-                raw = Path(f"/proc/{child.pid}/stat").read_text(encoding="utf-8")
-                state = raw[raw.rfind(")") + 2]
-                if state == "T":
-                    break
-                time.sleep(0.05)
-            check("background: app is frozen", state == "T", f"state={state}")
+            # No Plasma here, so KWin is stubbed: the tool must go through the
+            # window manager and never freeze the process.
+            stubs = tmp / "kwin-bin"
+            stubs.mkdir()
+            busctl = stubs / "busctl"
+            busctl.write_text(
+                "#!/bin/sh\n"
+                f'echo "$*" >> {tmp}/busctl.log\n'
+                f'case "$*" in *loadScript*) cp "$8" {tmp}/kwin-script.js ;; esac\n'
+                "echo 'i 0'\n",
+                encoding="utf-8")
+            busctl.chmod(0o755)
+            kwin_env = dict(os.environ, PATH=f"{stubs}:{os.environ.get('PATH', '')}")
 
-            resumed = run(["resume", str(child.pid)])
-            check("resume: exits 0", resumed.returncode == 0, resumed.stderr.strip())
-            time.sleep(0.15)
+            hidden = subprocess.run([sys.executable, str(TOOL), "background", str(child.pid)],
+                                    env=kwin_env, capture_output=True, text=True, timeout=60)
+            check("background: exits 0 with a window manager", hidden.returncode == 0,
+                  hidden.stderr.strip())
+            script = (tmp / "kwin-script.js").read_text(encoding="utf-8") \
+                if (tmp / "kwin-script.js").exists() else ""
+            check("background: asks KWin to minimise the window",
+                  f"const targetPid = {child.pid};" in script
+                  and "win.minimized = true" in script, script[:120])
+            check("background: does not freeze the process", "SIGSTOP" not in script)
+            log = (tmp / "busctl.log").read_text(encoding="utf-8") if (tmp / "busctl.log").exists() else ""
+            check("background: drives the KWin scripting interface",
+                  "org.kde.kwin.Scripting loadScript" in log and "org.kde.kwin.Script run" in log, log[:160])
             raw = Path(f"/proc/{child.pid}/stat").read_text(encoding="utf-8")
-            check("resume: app runs again", raw[raw.rfind(")") + 2] in "SRD", raw[raw.rfind(")") + 2])
+            check("background: process keeps running", raw[raw.rfind(")") + 2] in "SR",
+                  raw[raw.rfind(")") + 2])
+
+            (tmp / "kwin-script.js").unlink(missing_ok=True)
+            resumed = subprocess.run([sys.executable, str(TOOL), "resume", str(child.pid)],
+                                     env=kwin_env, capture_output=True, text=True, timeout=60)
+            check("resume: exits 0", resumed.returncode == 0, resumed.stderr.strip())
+            script = (tmp / "kwin-script.js").read_text(encoding="utf-8") \
+                if (tmp / "kwin-script.js").exists() else ""
+            check("resume: asks KWin to restore the window",
+                  "win.minimized = false" in script, script[:120])
+
+            # Without a window manager the command must fail clearly, not freeze.
+            no_kwin = run(["background", str(child.pid)])
+            check("background: fails cleanly without KWin",
+                  no_kwin.returncode != 0 and "window manager" in no_kwin.stderr,
+                  no_kwin.stderr.strip()[:120])
+            raw = Path(f"/proc/{child.pid}/stat").read_text(encoding="utf-8")
+            check("background: never frozen as a fallback", raw[raw.rfind(")") + 2] in "SR",
+                  raw[raw.rfind(")") + 2])
 
             closed = run(["close", str(child.pid)])
             check("close: exits 0", closed.returncode == 0, closed.stderr.strip())

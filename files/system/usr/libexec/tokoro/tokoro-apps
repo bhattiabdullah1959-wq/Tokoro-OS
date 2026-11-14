@@ -12,8 +12,9 @@ memory it holds and how much CPU it is using right now:
 
 Actions only ever touch processes owned by the same user. `close` sends TERM to
 the app and its children and only escalates to KILL for what is still alive
-after two seconds; `background` freezes the app with SIGSTOP (it stays open and
-keeps its memory) and `resume` wakes it with SIGCONT.
+after two seconds; `background` asks KWin to minimise the app's window (nothing
+is frozen, so it keeps painting and looks normal in the task bar) and `resume`
+restores and activates it.
 
 Startup apps are the standard ~/.config/autostart and /etc/xdg/autostart
 entries. Disabling one writes a user copy with `Hidden=true`, so the system
@@ -25,8 +26,11 @@ import argparse
 import glob
 import json
 import os
+import shutil
 import signal
+import subprocess
 import sys
+import tempfile
 import time
 
 TEST_FEATURE = True
@@ -330,10 +334,68 @@ def close(pid: int) -> dict:
     return {"action": "close", "pid": pid, "closed": True, "forced": killed}
 
 
+def busctl(*arguments: str) -> tuple[bool, str]:
+    executable = shutil.which("busctl")
+    if not executable:
+        return False, "busctl is missing (no systemd session bus)"
+    try:
+        result = subprocess.run([executable, "--user", *arguments],
+                                capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as err:
+        return False, str(err)
+    return result.returncode == 0, (result.stdout + result.stderr).strip()
+
+
+def kwin_window(pid: int, hide: bool) -> tuple[bool, str]:
+    """Minimise (or restore) every window belonging to pid, through KWin.
+
+    A KWin script is the only way to move another application's window on both
+    X11 and Wayland: it runs inside KWin and matches windows by pid. Nothing is
+    frozen, so the app keeps painting and looks normal in the task bar.
+    """
+    body = (
+        f"const targetPid = {pid};\n"
+        "const windows = workspace.windowList ? workspace.windowList() : [];\n"
+        "for (let i = 0; i < windows.length; i++) {\n"
+        "    const win = windows[i];\n"
+        "    if (win.pid !== targetPid) { continue; }\n"
+        + ("    win.minimized = true;\n" if hide else
+           "    win.minimized = false;\n    if (win.activate) { win.activate(); }\n")
+        + "}\n"
+    )
+    name = f"tokoro-overview-{pid}"
+    path = os.path.join(tempfile.gettempdir(), f"{name}.js")
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(body)
+        ok, output = busctl("call", "org.kde.KWin", "/Scripting",
+                            "org.kde.kwin.Scripting", "loadScript", "ss", path, name)
+        if not ok:
+            return False, output or "KWin scripting is unavailable"
+        parts = output.split()
+        if not parts:
+            return False, "KWin returned no script id"
+        script_id = parts[-1]
+        busctl("call", "org.kde.KWin", f"/Scripting/Script{script_id}",
+               "org.kde.kwin.Script", "run")
+        time.sleep(0.4)
+        busctl("call", "org.kde.KWin", f"/Scripting/Script{script_id}",
+               "org.kde.kwin.Script", "stop")
+        return True, ""
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
 def background(pid: int, resume: bool = False) -> dict:
     target(pid)
-    os.kill(pid, signal.SIGCONT if resume else signal.SIGSTOP)
-    return {"action": "resume" if resume else "background", "pid": pid, "ok": True}
+    ok, message = kwin_window(pid, hide=not resume)
+    if not ok:
+        raise SystemExit(f"could not reach the window manager: {message}")
+    return {"action": "resume" if resume else "background",
+            "pid": pid, "ok": True, "via": "kwin"}
 
 
 # --- output ------------------------------------------------------------------

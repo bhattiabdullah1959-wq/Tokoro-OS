@@ -23,7 +23,7 @@ entirely against this repository: no root, no Tokoro install, no hardware.
 | `test_features.py` | The test features against a fixture install: `status` JSON, `report` archive contents and permissions, `music` list/refusal/swap |
 | `test_media.py` | The music widget's helpers: MPRIS metadata parsing from Spotify-shaped `busctl` output, library indexing/cache, and level bars (simulated and `--available` agreement with cava) |
 | `test_monitor.py` | System Overview's terminal view on a synthetic machine: CPU/RAM/GPU/disk numbers, the colour-coded file breakdown (including that symlinks are not followed), `--no-scan`, and rejection of a zero interval |
-| `test_tokoro_apps.py` | The apps backend: kernel threads and other users' processes are skipped, green/yellow/red classes follow memory share, freeze/resume/close act only on your own processes (and refuse init), and startup entries list, disable and restore |
+| `test_tokoro_apps.py` | The apps backend: kernel threads and other users' processes are skipped, green/yellow/red classes follow memory share, close/minimise/restore act only on your own processes (and refuse init), the KWin script is driven through D-Bus (never SIGSTOP, and a clean failure without a window manager), and startup entries list, disable and restore |
 | `test_acer.sh` | Acer detection passes on an Acer laptop fixture and fails on Dell/desktop fixtures |
 | `test_ai_caps.sh` | Each tier keeps exactly its documented AI abilities; refused commands fail before doing work; a missing runtime is reported missing; an above-recommendation tier is a warning (exit 3), never a refusal |
 
