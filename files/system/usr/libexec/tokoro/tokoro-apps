@@ -1,0 +1,446 @@
+#!/usr/bin/env python3
+"""tokoro-apps — running apps and startup apps for the System Overview.
+
+TEST FEATURE (docs/experimental.md).
+
+Every number comes from /proc. Each app is classed by how much of this user's
+memory it holds and how much CPU it is using right now:
+
+  green   little — under 10% of the user's memory and under 5% CPU
+  yellow  medium — at least 10% of memory, or 5% CPU
+  red     the most — at least 25% of memory, or 25% CPU
+
+Actions only ever touch processes owned by the same user. `close` sends TERM to
+the app and its children and only escalates to KILL for what is still alive
+after two seconds; `background` freezes the app with SIGSTOP (it stays open and
+keeps its memory) and `resume` wakes it with SIGCONT.
+
+Startup apps are the standard ~/.config/autostart and /etc/xdg/autostart
+entries. Disabling one writes a user copy with `Hidden=true`, so the system
+file stays untouched and enabling restores it by deleting the override.
+"""
+from __future__ import annotations
+
+import argparse
+import glob
+import json
+import os
+import signal
+import sys
+import time
+
+TEST_FEATURE = True
+
+
+def read(path: str, default: str = "") -> str:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return default
+
+
+def read_bytes(path: str) -> bytes:
+    try:
+        with open(path, "rb") as fh:
+            return fh.read()
+    except OSError:
+        return b""
+
+
+# --- processes ---------------------------------------------------------------
+def status_field(pid_dir: str, field: str) -> str:
+    for line in read(os.path.join(pid_dir, "status")).splitlines():
+        if line.startswith(field + ":"):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def process_ids(root: str) -> list[str]:
+    try:
+        return sorted((name for name in os.listdir(os.path.join(root, "proc")) if name.isdigit()),
+                      key=int)
+    except OSError:
+        return []
+
+
+def stat_fields(pid_dir: str) -> list[str]:
+    raw = read(os.path.join(pid_dir, "stat"))
+    if not raw:
+        return []
+    close = raw.rfind(")")
+    if close < 0:
+        return []
+    return raw[close + 2:].split()
+
+
+def process_details(pid_dir: str) -> dict | None:
+    fields = stat_fields(pid_dir)
+    if len(fields) < 13:
+        return None
+    command = read_bytes(os.path.join(pid_dir, "cmdline")).replace(b"\0", b" ").decode(
+        "utf-8", "replace").strip()
+    rss = status_field(pid_dir, "VmRSS").split()
+    uid = status_field(pid_dir, "Uid").split()
+    try:
+        return {
+            "state": fields[0],
+            "ppid": int(fields[1]),
+            "ticks": int(fields[11]) + int(fields[12]),
+            "rss_mb": round(int(rss[0]) / 1024, 1) if rss else 0.0,
+            "uid": int(uid[0]) if uid else -1,
+            "name": status_field(pid_dir, "Name") or os.path.basename(pid_dir),
+            "command": command,
+        }
+    except (ValueError, IndexError):
+        return None
+
+
+def executable_of(pid_dir: str, details: dict) -> str:
+    try:
+        return os.path.basename(os.readlink(os.path.join(pid_dir, "exe")))
+    except OSError:
+        pass
+    command = details["command"].split()
+    return os.path.basename(command[0]) if command else details["name"]
+
+
+def desktop_index(directories: list[str]) -> dict[str, str]:
+    """Map an executable name to the desktop file's Name (Firefox, Spotify, …)."""
+    names: dict[str, str] = {}
+    for directory in directories:
+        for path in sorted(glob.glob(os.path.join(directory, "*.desktop"))):
+            label = ""
+            command = ""
+            for line in read(path).splitlines():
+                if line.startswith("Name=") and not label:
+                    label = line.split("=", 1)[1].strip()
+                elif line.startswith("Exec=") and not command:
+                    command = line.split("=", 1)[1].strip()
+            if not label or not command:
+                continue
+            binary = os.path.basename(command.split()[0].strip('"'))
+            names.setdefault(binary, label)
+    return names
+
+
+def ancestors(pid: int) -> set[int]:
+    """This process and everything above it — never offered for closing."""
+    seen: set[int] = set()
+    current = pid
+    for _ in range(64):
+        if current <= 1 or current in seen:
+            break
+        seen.add(current)
+        details = process_details(os.path.join("/proc", str(current)))
+        if not details:
+            break
+        current = details["ppid"]
+    return seen
+
+
+def app_entries(root: str, uid: int, interval: float,
+                desktop_dirs: list[str]) -> list[dict]:
+    names = desktop_index(desktop_dirs)
+    hz = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
+    # Never list this tool, nor the shell the data engine wrapped it in: they
+    # would flicker through the list on every refresh. Parents like plasmashell
+    # stay visible.
+    hidden = {os.getpid()}
+    parent = process_details(f"/proc/{os.getppid()}")
+    if parent and "tokoro-apps" in parent["command"]:
+        hidden.add(os.getppid())
+    before: dict[str, dict] = {}
+    for pid in process_ids(root):
+        directory = os.path.join(root, "proc", pid)
+        details = process_details(directory)
+        if not details or details["uid"] != uid or details["state"] == "Z":
+            continue
+        if int(pid) in hidden:
+            continue
+        if not details["command"]:
+            continue  # kernel threads and anything without a real command line
+        before[pid] = {**details, "exe": executable_of(directory, details)}
+    if interval > 0 and before:
+        time.sleep(interval)
+    apps = []
+    for pid, first in before.items():
+        directory = os.path.join(root, "proc", pid)
+        after = process_details(directory)
+        ticks = (after["ticks"] - first["ticks"]) if after else 0
+        cpu = round(max(0.0, 100.0 * ticks / (hz * interval)), 1) if interval > 0 else 0.0
+        executable = first["exe"]
+        apps.append({
+            "pid": int(pid),
+            "name": names.get(executable, executable or first["name"]),
+            "executable": executable,
+            "command": first["command"][:120],
+            "rss_mb": first["rss_mb"],
+            "cpu_percent": cpu,
+            "state": "suspended" if first["state"] in ("T", "t") else "running",
+        })
+    classify(apps)
+    apps.sort(key=lambda app: (app["rss_mb"], app["cpu_percent"]), reverse=True)
+    return apps
+
+
+def classify(apps: list[dict]) -> None:
+    total = sum(app["rss_mb"] for app in apps) or 1.0
+    for app in apps:
+        share = app["rss_mb"] / total
+        if share >= 0.25 or app["cpu_percent"] >= 25:
+            app["class"] = "red"
+        elif share >= 0.10 or app["cpu_percent"] >= 5:
+            app["class"] = "yellow"
+        else:
+            app["class"] = "green"
+        app["memory_share"] = round(100.0 * share, 1)
+
+
+# --- startup apps ------------------------------------------------------------
+def desktop_value(path: str, key: str) -> str:
+    for line in read(path).splitlines():
+        if line.startswith(key + "="):
+            return line.split("=", 1)[1].strip()
+    return ""
+
+
+def startup_dirs(config_home: str, etc_dirs: list[str]) -> tuple[str, list[str]]:
+    return os.path.join(config_home, "autostart"), etc_dirs
+
+
+def startup_entries(config_home: str, etc_dirs: list[str]) -> list[dict]:
+    user_dir, system_dirs = startup_dirs(config_home, etc_dirs)
+    found: dict[str, dict] = {}
+    for directory in system_dirs:
+        for path in sorted(glob.glob(os.path.join(directory, "*.desktop"))):
+            identifier = os.path.basename(path)[:-len(".desktop")]
+            hidden = desktop_value(path, "Hidden").lower() == "true"
+            found.setdefault(identifier, {
+                "id": identifier,
+                "name": desktop_value(path, "Name") or identifier,
+                "exec": desktop_value(path, "Exec"),
+                "enabled": not hidden,
+                "source": "system",
+            })
+    for path in sorted(glob.glob(os.path.join(user_dir, "*.desktop"))):
+        identifier = os.path.basename(path)[:-len(".desktop")]
+        hidden = desktop_value(path, "Hidden").lower() == "true"
+        disabled = desktop_value(path, "X-GNOME-Autostart-enabled").lower() == "false"
+        entry = found.get(identifier, {
+            "id": identifier,
+            "name": desktop_value(path, "Name") or identifier,
+            "exec": desktop_value(path, "Exec"),
+            "source": "user",
+        })
+        entry.update({"enabled": not hidden and not disabled, "source": "user"})
+        found[identifier] = entry
+    return sorted(found.values(), key=lambda entry: entry["name"].lower())
+
+
+def set_startup(config_home: str, etc_dirs: list[str], identifier: str, enable: bool) -> dict:
+    user_dir, system_dirs = startup_dirs(config_home, etc_dirs)
+    system_path = ""
+    for directory in system_dirs:
+        candidate = os.path.join(directory, identifier + ".desktop")
+        if os.path.isfile(candidate):
+            system_path = candidate
+            break
+    user_path = os.path.join(user_dir, identifier + ".desktop")
+    if not system_path and not os.path.isfile(user_path):
+        raise SystemExit(f"unknown startup app: {identifier}")
+
+    if enable:
+        if system_path:
+            if os.path.isfile(user_path):
+                os.unlink(user_path)
+            return {"id": identifier, "enabled": True, "source": "system"}
+        lines = [line for line in read(user_path).splitlines()
+                 if not line.startswith(("Hidden=", "X-GNOME-Autostart-enabled="))]
+        lines.append("Hidden=false")
+        os.makedirs(user_dir, exist_ok=True)
+        with open(user_path, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines).rstrip("\n") + "\n")
+        return {"id": identifier, "enabled": True, "source": "user"}
+
+    base = read(system_path or user_path)
+    lines = [line for line in base.splitlines()
+             if not line.startswith(("Hidden=", "X-GNOME-Autostart-enabled="))]
+    lines.extend(["Hidden=true", "X-GNOME-Autostart-enabled=false"])
+    os.makedirs(user_dir, exist_ok=True)
+    with open(user_path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines).rstrip("\n") + "\n")
+    return {"id": identifier, "enabled": False, "source": "user"}
+
+
+# --- actions -----------------------------------------------------------------
+def target(pid: int) -> dict:
+    if pid <= 1:
+        raise SystemExit("refusing to act on init")
+    details = process_details(os.path.join("/proc", str(pid)))
+    if not details:
+        raise SystemExit(f"no such process: {pid}")
+    if details["uid"] != os.getuid():
+        raise SystemExit("refusing to act on another user's process")
+    if pid in ancestors(os.getpid()):
+        raise SystemExit("refusing to act on this shell or its parents")
+    return details
+
+
+def descendants(pid: int) -> list[int]:
+    children: dict[int, list[int]] = {}
+    for candidate in process_ids("/"):
+        details = process_details(os.path.join("/proc", candidate))
+        if details:
+            children.setdefault(details["ppid"], []).append(int(candidate))
+    found: list[int] = []
+    queue = [pid]
+    while queue:
+        current = queue.pop(0)
+        for child in children.get(current, []):
+            if child not in found:
+                found.append(child)
+                queue.append(child)
+    return found
+
+
+def close(pid: int) -> dict:
+    target(pid)
+    victims = descendants(pid) + [pid]
+    for victim in victims:
+        try:
+            os.kill(victim, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            pass
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        time.sleep(0.1)
+        if not os.path.exists(f"/proc/{pid}"):
+            break
+    killed = []
+    for victim in victims:
+        if os.path.exists(f"/proc/{victim}"):
+            try:
+                os.kill(victim, signal.SIGKILL)
+                killed.append(victim)
+            except (ProcessLookupError, PermissionError):
+                pass
+    return {"action": "close", "pid": pid, "closed": True, "forced": killed}
+
+
+def background(pid: int, resume: bool = False) -> dict:
+    target(pid)
+    os.kill(pid, signal.SIGCONT if resume else signal.SIGSTOP)
+    return {"action": "resume" if resume else "background", "pid": pid, "ok": True}
+
+
+# --- output ------------------------------------------------------------------
+COLOURS = {"green": "38;5;114", "yellow": "38;5;221", "red": "38;5;203"}
+
+
+def render_list(apps: list[dict], colour: bool) -> str:
+    lines = ["System Overview — running apps", ""]
+    if not apps:
+        return "\n".join(lines + ["  nothing running"])
+    lines.append(f"  {'PID':>7}  {'APP':<26} {'MEM':>9}  {'CPU':>6}  STATE")
+    for app in apps:
+        row = (f"  {app['pid']:>7}  {app['name'][:26]:<26} "
+               f"{app['rss_mb']:>7.1f} MB  {app['cpu_percent']:>5.1f}%  {app['state']}")
+        if colour:
+            row = f"\033[{COLOURS[app['class']]}m{row}\033[0m"
+        lines.append(row)
+    lines.append("")
+    lines.append("  green little · yellow medium · red most of this user's memory/CPU")
+    return "\n".join(lines)
+
+
+def render_startup(entries: list[dict]) -> str:
+    lines = ["System Overview — startup apps", ""]
+    if not entries:
+        return "\n".join(lines + ["  no autostart entries"])
+    for entry in entries:
+        mark = "on " if entry["enabled"] else "off"
+        lines.append(f"  [{mark}] {entry['name'][:34]:<34} {entry['id']}")
+    lines.append("")
+    lines.append("  turn one on/off: tokoro apps startup enable|disable <id>")
+    return "\n".join(lines)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Tokoro System Overview: running apps, resource classes, startup apps")
+    parser.add_argument("command", nargs="?", default="list",
+                        choices=["list", "startup", "close", "background", "resume"])
+    parser.add_argument("extra", nargs="*", help="a pid, or `enable|disable <id>` for startup")
+    parser.add_argument("--json", action="store_true", help="machine readable output")
+    parser.add_argument("--interval", type=float, default=0.3,
+                        help="seconds between the two CPU samples (0 turns CPU usage off)")
+    parser.add_argument("--root", default=os.environ.get("TOKORO_ROOT", "/"),
+                        help="filesystem root to read /proc from (tests)")
+    parser.add_argument("--uid", type=int, default=os.getuid(), help="only this user's apps")
+    parser.add_argument("--desktop-dir", action="append", default=None,
+                        help="directory with .desktop files for app names (repeatable)")
+    parser.add_argument("--config-home", default=os.environ.get(
+        "XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
+                        help="where the user's autostart entries live")
+    parser.add_argument("--etc-dir", action="append", default=None,
+                        help="system autostart directory (repeatable)")
+    # Flags may appear before or after the words (`startup --json enable x`),
+    # which argparse's positional nargs cannot express on its own.
+    args, leftovers = parser.parse_known_args()
+    if leftovers:
+        if any(token.startswith("-") for token in leftovers):
+            parser.error(f"unrecognized option: {leftovers[0]}")
+        args.extra.extend(leftovers)
+
+    desktop_dirs = args.desktop_dir or [
+        "/usr/share/applications",
+        "/var/lib/flatpak/exports/share/applications",
+        os.path.expanduser("~/.local/share/applications"),
+    ]
+    etc_dirs = args.etc_dir or ["/etc/xdg/autostart"]
+
+    if args.command == "list":
+        apps = app_entries(args.root, args.uid, max(0.0, args.interval), desktop_dirs)
+        if args.json:
+            print(json.dumps({
+                "schema": 1,
+                "test_feature": TEST_FEATURE,
+                "generated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "apps": apps,
+                "startup": startup_entries(args.config_home, etc_dirs),
+            }, indent=2))
+            return 0
+        print(render_list(apps, sys.stdout.isatty() and not os.environ.get("NO_COLOR")))
+        return 0
+
+    if args.command == "startup":
+        if not args.extra:
+            entries = startup_entries(args.config_home, etc_dirs)
+            if args.json:
+                print(json.dumps({"schema": 1, "test_feature": TEST_FEATURE,
+                                  "startup": entries}, indent=2))
+            else:
+                print(render_startup(entries))
+            return 0
+        if len(args.extra) != 2 or args.extra[0] not in ("enable", "disable"):
+            parser.error("usage: startup [enable|disable <id>]")
+        result = set_startup(args.config_home, etc_dirs, args.extra[1],
+                             args.extra[0] == "enable")
+        print(json.dumps(result, indent=2) if args.json
+              else f"{result['id']}: {'on' if result['enabled'] else 'off'}")
+        return 0
+
+    pid_text = args.extra[0] if args.extra else ""
+    if not pid_text.isdigit():
+        parser.error(f"{args.command} needs a pid")
+    result = (close(int(pid_text)) if args.command == "close"
+              else background(int(pid_text), resume=args.command == "resume"))
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

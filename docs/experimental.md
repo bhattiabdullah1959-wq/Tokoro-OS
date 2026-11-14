@@ -27,13 +27,15 @@ always match `tokoro tier show`, `tokoro ai status` and `tokoro bench run`. The
 driver scan is capped at 12 seconds so a slow `fwupd` cannot hang the command,
 and `--json` gives the same data for the applet or a script.
 
-## `tokoro monitor [--watch] [--json]`
+## System Overview — `tokoro overview` and the panel widget
 
-The task manager. One screen for what the machine is doing right now:
+The task manager, renamed and split in two: `tokoro overview` prints it in the
+terminal and the **Tokoro System Overview** panel widget shows the same numbers
+with tabs. One screen for what the machine is doing right now:
 
 ```console
-$ tokoro monitor
-Tokoro monitor — CPU AMD Ryzen 7 5800H · 8 cores / 16 threads
+$ tokoro overview
+Tokoro System Overview — CPU AMD Ryzen 7 5800H · 8 cores / 16 threads
   load average 0.42 0.51 0.63
   CPU    ███████░░░░░░░░░░░░░░░  34.0%
   cores  █ 34 ░ 12 █ 61 ░  8
@@ -73,6 +75,36 @@ Tokoro monitor — CPU AMD Ryzen 7 5800H · 8 cores / 16 threads
 `--watch` redraws every `--interval` seconds (Ctrl+C quits), `--json` gives the
 same data, `--no-color` and `NO_COLOR` produce plain text, and `--root` points
 `/proc` and `/sys` at a fixture, which is how it is tested.
+
+### Tabs and app controls
+
+The widget has four tabs: **Overview** (CPU, RAM, disk and the file breakdown),
+**Specs** (OS, kernel, host, CPU, memory, swap, GPU, storage), **Apps** and
+**Startup**. Every app row is coloured by how much of your memory and CPU it
+holds right now — green for little, yellow for medium, red for the most — and a
+right-click offers *Close app* (TERM to the app and its children, KILL only for
+what survives two seconds) or *Keep in background* (SIGSTOP, which freezes it
+with its memory intact; the same menu then brings it back).
+
+The backend is tested on its own:
+
+```console
+$ tokoro apps
+System Overview — running apps
+
+      PID  APP                        MEM     CPU  STATE
+     2134  Firefox Web Browser    1840.2 MB    6.1%  running
+     3087  Visual Studio Code      612.4 MB    3.2%  running
+     4021  mpv                     188.0 MB    1.4%  running
+
+  green little · yellow medium · red most of this user's memory/CPU
+```
+
+`tokoro apps startup` lists the autostart entries, and
+`tokoro apps startup disable <id>` writes a `Hidden=true` override in
+`~/.config/autostart` without touching the system file; `enable` deletes the
+override again. Nothing here can touch another user's processes, init, or the
+shell that started it.
 
 ## Now-playing widget + `tokoro now` / `library` / `levels`
 
@@ -140,5 +172,5 @@ line instead of failing silently, and `--play` passes a file or folder to it.
 ## Why so small
 
 A distro should not grow commands faster than it can test them. Each of these
-has a fixture test in `tests/test_features.py`, runs without root, and depends
+has a fixture test under `tests/`, runs without root, and depends
 only on bash, Python's standard library and the tools already in the image.

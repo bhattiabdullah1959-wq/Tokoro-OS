@@ -70,6 +70,11 @@ player works the same on both images.
 ### Signature features
 - **Live wallpaper support** via KDE's video/shader wallpaper plugins, plus five
   tier wallpapers under `/usr/share/tokoro/wallpapers/`.
+- **System Overview** (`tokoro overview`, `tokoro apps`, and the panel widget):
+  CPU, RAM, GPU and disk with a colour-coded file breakdown, a **Specs** tab, and
+  a **running apps** tab where every app is green, yellow or red by how much it
+  uses — right-click to close it or keep it in the background, plus a **Startup**
+  tab for which apps open when you sign in.
 - **Now-playing panel widget**: current track and art, transport over MPRIS
   (Spotify included, no account or API key), level bars fed by `cava` when it is
   installed, and a scrollable local-music list that plays on click.
@@ -97,7 +102,8 @@ detect and advise. Details: [docs/acer.md](docs/acer.md).
 tokoro version            release version and car codename
 tokoro doctor             verify branding, banner, tier, AI, Acer state
 tokoro status             one-screen health summary (test feature)
-tokoro monitor            task manager + storage breakdown (test feature)
+tokoro overview           system overview: usage, specs, apps, startup (test feature)
+tokoro apps               running apps by resource use + startup apps (test feature)
 tokoro report             diagnostics bundle for a bug report (test feature)
 tokoro music              open the configured player (test feature)
 tokoro now                control the current player over MPRIS (test feature)

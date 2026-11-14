@@ -1,0 +1,18 @@
+{
+  "KPlugin": {
+    "Authors": [
+      {
+        "Name": "Tokoro OS"
+      }
+    ],
+    "Category": "System Information",
+    "Description": "System Overview: usage, specs, running apps and startup apps",
+    "EnabledByDefault": true,
+    "Icon": "utilities-system-monitor",
+    "Id": "org.tokoro.overview",
+    "License": "MIT",
+    "Name": "Tokoro System Overview",
+    "Version": "1.0"
+  },
+  "X-Plasma-API-Minimum-Version": "6.0"
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""tokoro-monitor — terminal task manager and usage dashboard.
+"""tokoro-monitor — the terminal side of System Overview.
 
 TEST FEATURE (docs/experimental.md).
 
@@ -114,6 +114,25 @@ def cpu_model(root: str) -> dict:
 def load_average(root: str) -> list[str]:
     parts = read(os.path.join(root, "proc/loadavg")).split()
     return parts[:3]
+
+
+def system_info(root: str) -> dict:
+    """Names and uptime for the Specs tab; empty strings when unreadable."""
+    release: dict[str, str] = {}
+    for line in read(os.path.join(root, "etc/os-release")).splitlines():
+        if "=" in line:
+            key, _, value = line.partition("=")
+            release[key.strip()] = value.strip().strip('"')
+    try:
+        uptime = int(float(read(os.path.join(root, "proc/uptime")).split()[0]))
+    except (IndexError, ValueError):
+        uptime = 0
+    return {
+        "os": release.get("PRETTY_NAME", release.get("NAME", "")),
+        "kernel": read(os.path.join(root, "proc/sys/kernel/osrelease")),
+        "hostname": read(os.path.join(root, "proc/sys/kernel/hostname")),
+        "uptime_seconds": uptime,
+    }
 
 
 # --- memory ------------------------------------------------------------------
@@ -355,6 +374,7 @@ def snapshot(args: argparse.Namespace, paint: Paint) -> dict:
         "memory": memory_info,
         "gpus": gpus(root),
         "storage": {**disk_info, **storage},
+        "system": system_info(root),
         "processes": processes(root, args.top),
     }
 
@@ -364,7 +384,7 @@ def render(data: dict, paint: Paint) -> str:
     mem = data["memory"]
     disk_info = data["storage"]
     lines = [
-        f"Tokoro monitor — CPU {cpu['model']} · "
+        f"Tokoro System Overview — CPU {cpu['model']} · "
         f"{cpu['cores']} cores / {cpu['threads']} threads",
     ]
     load = " ".join(cpu["load"]) or "?"
@@ -428,7 +448,7 @@ def render(data: dict, paint: Paint) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Tokoro task manager: CPU, RAM, GPU, disk and processes")
+        description="Tokoro System Overview: CPU, RAM, GPU, disk and processes")
     parser.add_argument("--json", action="store_true", help="machine readable snapshot")
     parser.add_argument("--watch", action="store_true",
                         help="redraw every --interval seconds (Ctrl+C to quit)")
