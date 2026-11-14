@@ -45,11 +45,13 @@ else
   notice "/etc/motd.d drop-in missing"
 fi
 if [[ -f /usr/share/ublue-os/motd/template.md ]]; then
-  if grep -qi 'bazzite' /usr/share/ublue-os/motd/template.md; then
-    bad "ublue motd template still mentions Bazzite"
-  else
+  # Branding, not credit: the Tokoro template names its Bazzite base on purpose,
+  # so look for our own name instead of rejecting the word "bazzite".
+  if grep -qi 'tokoro' /usr/share/ublue-os/motd/template.md; then
     banner_hits=$((banner_hits + 1))
     ok "ublue motd template rebranded"
+  else
+    bad "ublue motd template is not rebranded; it is still the upstream Bazzite one"
   fi
 elif [[ -f /etc/motd ]] && grep -q 'TOKORO-BANNER' /etc/motd; then
   banner_hits=$((banner_hits + 1))

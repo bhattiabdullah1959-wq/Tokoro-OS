@@ -47,7 +47,10 @@ cmd_lean() {
   if [[ "${1:-list}" == "list" ]]; then
     [[ -r "$list" ]] || tokoro_die "optional unit list missing"
     grep -v '^#' "$list" | grep -v '^$' | while read -r unit; do
-      state=$(systemctl is-enabled "$unit" 2>/dev/null || echo unknown)
+      # is-enabled prints its answer and still exits 1 for disabled/static units,
+      # so a `|| echo unknown` fallback would add a bogus second line.
+      state=$(systemctl is-enabled "$unit" 2>/dev/null | head -n 1 || true)
+      [[ -n "$state" ]] || state=unknown
       printf '%-52s %s\n' "$unit" "$state"
     done
     printf '\nDisable an optional service: sudo tokoro lean disable <unit>\n'

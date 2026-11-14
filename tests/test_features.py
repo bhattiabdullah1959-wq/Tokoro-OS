@@ -128,6 +128,28 @@ def main() -> int:
         check("music: honours the configured swap",
               "io.bassi.Amberol" in swapped.stderr, swapped.stderr.strip())
 
+        # --- lean -------------------------------------------------------------
+        # systemctl prints its answer and still exits 1 for disabled units. The
+        # listing has to show exactly one state per unit and must not abort.
+        stubs = tmp / "stubs"
+        stubs.mkdir()
+        systemctl = stubs / "systemctl"
+        systemctl.write_text("#!/bin/sh\nprintf 'disabled\\n'\nexit 1\n", encoding="utf-8")
+        systemctl.chmod(0o755)
+        lean_env = dict(env, PATH=f"{stubs}:{env['PATH']}")
+        lean = run([str(ROOT / "files/system/usr/bin/tokoro"), "lean", "list"], lean_env)
+        check("lean: exits 0 with disabled units", lean.returncode == 0, lean.stderr.strip())
+        known = {"enabled", "disabled", "static", "masked", "not-found", "unknown"}
+        states = [line.split()[-1] for line in lean.stdout.splitlines()
+                  if line.split() and line.split()[-1] in known]
+        units = [line for line in (SHARE / "lean/optional-units.txt").read_text(
+            encoding="utf-8").splitlines() if line and not line.startswith("#")]
+        check("lean: one state per unit", len(states) == len(units),
+              f"{len(states)} states for {len(units)} units")
+        check("lean: reports the real state", states and set(states) == {"disabled"},
+              str(sorted(set(states))))
+        check("lean: no bogus unknown state", "unknown" not in lean.stdout)
+
         # --- usage ------------------------------------------------------------
         for command in ("tokoro-status", "tokoro-report"):
             help_run = run([str(EXEC / command), "--help"], env)
