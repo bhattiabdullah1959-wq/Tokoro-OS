@@ -52,9 +52,9 @@ def main() -> int:
         return 1
 
     width, height, depth, colour = struct.unpack(">IIBB", chunks[b"IHDR"][:10])
-    # The two-step Plymouth theme places this at 96% height; the geometry has to
-    # match the slot the old Bazzite logo occupied or it is scaled badly.
-    check("wordmark: is 149x43", (width, height) == (149, 43), f"{width}x{height}")
+    # The two-step theme draws the watermark at native size, anchored at 96%
+    # height; the height is what keeps it inside the slot, so pin both.
+    check("wordmark: is 226x44", (width, height) == (226, 44), f"{width}x{height}")
     check("wordmark: 8-bit RGBA", (depth, colour) == (8, 6), f"depth={depth} colour={colour}")
 
     pixels = zlib.decompress(chunks[b"IDAT"])
